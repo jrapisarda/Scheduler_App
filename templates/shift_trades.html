@@ -1,0 +1,438 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="grid grid-2">
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Request Shift Trade</h2>
+        </div>
+        <form id="trade-form">
+            <div class="form-group">
+                <label class="form-label">Your Name *</label>
+                <select class="form-control" id="requesting-employee" required>
+                    <option value="">Select your name</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Shift to Trade *</label>
+                <select class="form-control" id="original-shift" required>
+                    <option value="">Select your shift</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Trade With *</label>
+                <select class="form-control" id="target-employee" required>
+                    <option value="">Select employee</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Their Shift *</label>
+                <select class="form-control" id="target-shift" required>
+                    <option value="">Select their shift</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Reason for Trade</label>
+                <textarea class="form-control" id="trade-reason" rows="3" placeholder="Explain why you need this trade"></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">
+                <i class="fas fa-exchange-alt"></i>
+                Request Trade
+            </button>
+        </form>
+    </div>
+    
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Trade Statistics</h2>
+        </div>
+        <div class="grid grid-2">
+            <div class="stat-card">
+                <div class="stat-number" id="pending-trades">0</div>
+                <div class="stat-label">Pending Trades</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="completed-trades">0</div>
+                <div class="stat-label">Completed Trades</div>
+            </div>
+        </div>
+        <div id="trade-chart"></div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Shift Trade Requests</h2>
+        <select class="form-control" id="status-filter" style="display: inline-block; width: auto;">
+            <option value="">All Status</option>
+            <option value="PENDING">Pending</option>
+            <option value="APPROVED">Approved</option>
+            <option value="DENIED">Denied</option>
+        </select>
+    </div>
+    <div class="table-responsive">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Requested By</th>
+                    <th>Original Shift</th>
+                    <th>Trade With</th>
+                    <th>Target Shift</th>
+                    <th>Reason</th>
+                    <th>Status</th>
+                    <th>Requested</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="trades-table">
+                <!-- Trade requests will be loaded here -->
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Trade Details Modal -->
+<div id="trade-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
+    <div style="background: white; margin: 10% auto; padding: 2rem; border-radius: 16px; max-width: 600px;">
+        <h3>Trade Details</h3>
+        <div id="trade-details"></div>
+        <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 2rem;">
+            <button class="btn" onclick="closeTradeModal()">Close</button>
+            <button class="btn btn-success" id="approve-trade-btn" onclick="approveTrade()">Approve Trade</button>
+            <button class="btn btn-danger" id="deny-trade-btn" onclick="denyTrade()">Deny Trade</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let employees = [];
+let shiftTrades = [];
+let currentTradeId = null;
+
+// Initialize page
+document.addEventListener('DOMContentLoaded', function() {
+    loadEmployees();
+    loadShiftTrades();
+    document.getElementById('status-filter').addEventListener('change', filterTrades);
+});
+
+async function loadEmployees() {
+    try {
+        const response = await apiRequest('/api/employees');
+        employees = response;
+        populateEmployeeSelects();
+    } catch (error) {
+        console.error('Failed to load employees:', error);
+    }
+}
+
+function populateEmployeeSelects() {
+    const requestingSelect = document.getElementById('requesting-employee');
+    const targetSelect = document.getElementById('target-employee');
+    
+    requestingSelect.innerHTML = '<option value="">Select your name</option>';
+    targetSelect.innerHTML = '<option value="">Select employee</option>';
+    
+    employees.forEach(emp => {
+        const option1 = document.createElement('option');
+        option1.value = emp.id;
+        option1.textContent = emp.name;
+        requestingSelect.appendChild(option1);
+        
+        const option2 = document.createElement('option');
+        option2.value = emp.id;
+        option2.textContent = emp.name;
+        targetSelect.appendChild(option2);
+    });
+}
+
+async function loadShiftTrades() {
+    try {
+        // For now, we'll use mock data
+        // In a real implementation, this would call the API
+        shiftTrades = [
+            {
+                id: 1,
+                requesting_employee_name: 'Lisa Dixon',
+                target_employee_name: 'Shala Johnson',
+                original_shift: '2025-10-05 Day D1',
+                target_shift: '2025-10-06 Day D2',
+                reason: 'Family emergency',
+                status: 'PENDING',
+                created_at: '2025-09-28T10:30:00'
+            },
+            {
+                id: 2,
+                requesting_employee_name: 'Chloe Gray',
+                target_employee_name: 'Tash Jaramillo',
+                original_shift: '2025-10-07 Night N3',
+                target_shift: '2025-10-08 Night N2',
+                reason: 'Medical appointment',
+                status: 'APPROVED',
+                created_at: '2025-09-27T14:15:00'
+            }
+        ];
+        
+        displayShiftTrades();
+        updateStatistics();
+    } catch (error) {
+        console.error('Failed to load shift trades:', error);
+    }
+}
+
+function displayShiftTrades() {
+    const tbody = document.getElementById('trades-table');
+    
+    if (shiftTrades.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 2rem;">No shift trade requests found.</td></tr>';
+        return;
+    }
+    
+    const html = shiftTrades.map(trade => `
+        <tr>
+            <td>${trade.requesting_employee_name}</td>
+            <td>${trade.original_shift}</td>
+            <td>${trade.target_employee_name}</td>
+            <td>${trade.target_shift}</td>
+            <td>${trade.reason || 'No reason provided'}</td>
+            <td>
+                <span class="status-badge status-${trade.status.toLowerCase()}">
+                    ${trade.status}
+                </span>
+            </td>
+            <td>${new Date(trade.created_at).toLocaleDateString()}</td>
+            <td>
+                <button class="btn btn-primary" onclick="viewTradeDetails(${trade.id})" style="padding: 0.5rem 1rem; margin-right: 0.5rem;">
+                    <i class="fas fa-eye"></i>
+                </button>
+                ${trade.status === 'PENDING' ? `
+                    <button class="btn btn-success" onclick="approveTrade(${trade.id})" style="padding: 0.5rem 1rem; margin-right: 0.5rem;">
+                        <i class="fas fa-check"></i>
+                    </button>
+                    <button class="btn btn-danger" onclick="denyTrade(${trade.id})" style="padding: 0.5rem 1rem;">
+                        <i class="fas fa-times"></i>
+                    </button>
+                ` : ''}
+            </td>
+        </tr>
+    `).join('');
+    
+    tbody.innerHTML = html;
+}
+
+function updateStatistics() {
+    const pending = shiftTrades.filter(trade => trade.status === 'PENDING').length;
+    const completed = shiftTrades.filter(trade => trade.status === 'APPROVED').length;
+    
+    document.getElementById('pending-trades').textContent = pending;
+    document.getElementById('completed-trades').textContent = completed;
+    
+    // Create trade status chart
+    const data = [{
+        labels: ['Pending', 'Approved', 'Denied'],
+        values: [
+            shiftTrades.filter(t => t.status === 'PENDING').length,
+            shiftTrades.filter(t => t.status === 'APPROVED').length,
+            shiftTrades.filter(t => t.status === 'DENIED').length
+        ],
+        type: 'pie',
+        marker: {
+            colors: ['#f6ad55', '#48bb78', '#f56565']
+        }
+    }];
+    
+    const layout = {
+        title: 'Trade Request Status',
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        font: { family: 'Inter, sans-serif' }
+    };
+    
+    Plotly.newPlot('trade-chart', data, layout, {responsive: true});
+}
+
+function filterTrades() {
+    const status = document.getElementById('status-filter').value;
+    const rows = document.querySelectorAll('#trades-table tr');
+    
+    rows.forEach(row => {
+        if (status === '') {
+            row.style.display = '';
+        } else {
+            const statusCell = row.querySelector('.status-badge');
+            if (statusCell && statusCell.textContent.trim() === status) {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+            }
+        }
+    });
+}
+
+function viewTradeDetails(tradeId) {
+    const trade = shiftTrades.find(t => t.id === tradeId);
+    if (!trade) return;
+    
+    currentTradeId = tradeId;
+    
+    const detailsHtml = `
+        <div class="form-group">
+            <label><strong>Requested By:</strong> ${trade.requesting_employee_name}</label>
+        </div>
+        <div class="form-group">
+            <label><strong>Original Shift:</strong> ${trade.original_shift}</label>
+        </div>
+        <div class="form-group">
+            <label><strong>Trade With:</strong> ${trade.target_employee_name}</label>
+        </div>
+        <div class="form-group">
+            <label><strong>Target Shift:</strong> ${trade.target_shift}</label>
+        </div>
+        <div class="form-group">
+            <label><strong>Reason:</strong> ${trade.reason || 'No reason provided'}</label>
+        </div>
+        <div class="form-group">
+            <label><strong>Status:</strong> 
+                <span class="status-badge status-${trade.status.toLowerCase()}">
+                    ${trade.status}
+                </span>
+            </label>
+        </div>
+        <div class="form-group">
+            <label><strong>Requested Date:</strong> ${new Date(trade.created_at).toLocaleString()}</label>
+        </div>
+    `;
+    
+    document.getElementById('trade-details').innerHTML = detailsHtml;
+    document.getElementById('trade-modal').style.display = 'block';
+    
+    // Show/hide action buttons based on status
+    const approveBtn = document.getElementById('approve-trade-btn');
+    const denyBtn = document.getElementById('deny-trade-btn');
+    
+    if (trade.status === 'PENDING') {
+        approveBtn.style.display = 'inline-block';
+        denyBtn.style.display = 'inline-block';
+    } else {
+        approveBtn.style.display = 'none';
+        denyBtn.style.display = 'none';
+    }
+}
+
+function closeTradeModal() {
+    document.getElementById('trade-modal').style.display = 'none';
+    currentTradeId = null;
+}
+
+async function approveTrade(tradeId = null) {
+    const id = tradeId || currentTradeId;
+    if (!id) return;
+    
+    if (!confirm('Are you sure you want to approve this trade?')) {
+        return;
+    }
+    
+    try {
+        // For now, we'll just update the local data
+        // In a real implementation, this would call the API
+        const trade = shiftTrades.find(t => t.id === id);
+        if (trade) {
+            trade.status = 'APPROVED';
+            showAlert('Trade approved successfully!');
+            displayShiftTrades();
+            updateStatistics();
+            closeTradeModal();
+        }
+    } catch (error) {
+        console.error('Failed to approve trade:', error);
+        showAlert('Failed to approve trade.', 'danger');
+    }
+}
+
+async function denyTrade(tradeId = null) {
+    const id = tradeId || currentTradeId;
+    if (!id) return;
+    
+    if (!confirm('Are you sure you want to deny this trade?')) {
+        return;
+    }
+    
+    try {
+        // For now, we'll just update the local data
+        // In a real implementation, this would call the API
+        const trade = shiftTrades.find(t => t.id === id);
+        if (trade) {
+            trade.status = 'DENIED';
+            showAlert('Trade denied successfully!');
+            displayShiftTrades();
+            updateStatistics();
+            closeTradeModal();
+        }
+    } catch (error) {
+        console.error('Failed to deny trade:', error);
+        showAlert('Failed to deny trade.', 'danger');
+    }
+}
+
+// Handle form submission
+document.getElementById('trade-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const requestingEmployee = document.getElementById('requesting-employee').value;
+    const originalShift = document.getElementById('original-shift').value;
+    const targetEmployee = document.getElementById('target-employee').value;
+    const targetShift = document.getElementById('target-shift').value;
+    
+    if (!requestingEmployee || !originalShift || !targetEmployee || !targetShift) {
+        showAlert('Please fill in all required fields.', 'danger');
+        return;
+    }
+    
+    if (requestingEmployee === targetEmployee) {
+        showAlert('You cannot trade with yourself.', 'danger');
+        return;
+    }
+    
+    const tradeData = {
+        requesting_employee_id: parseInt(requestingEmployee),
+        target_employee_id: parseInt(targetEmployee),
+        original_shift: originalShift,
+        target_shift: targetShift,
+        reason: document.getElementById('trade-reason').value
+    };
+    
+    try {
+        // For now, we'll just add to local data
+        // In a real implementation, this would call the API
+        const newTrade = {
+            id: shiftTrades.length + 1,
+            requesting_employee_name: employees.find(e => e.id == requestingEmployee).name,
+            target_employee_name: employees.find(e => e.id == targetEmployee).name,
+            original_shift: originalShift,
+            target_shift: targetShift,
+            reason: tradeData.reason,
+            status: 'PENDING',
+            created_at: new Date().toISOString()
+        };
+        
+        shiftTrades.unshift(newTrade);
+        showAlert('Shift trade request submitted successfully!');
+        document.getElementById('trade-form').reset();
+        displayShiftTrades();
+        updateStatistics();
+    } catch (error) {
+        console.error('Failed to submit trade request:', error);
+        showAlert('Failed to submit trade request.', 'danger');
+    }
+});
+
+// Close modal when clicking outside
+window.onclick = function(event) {
+    const modal = document.getElementById('trade-modal');
+    if (event.target === modal) {
+        closeTradeModal();
+    }
+}
+</script>
+{% endblock %}

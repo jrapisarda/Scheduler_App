@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h1 class="card-title">Hospital PBX Scheduling Dashboard</h1>
+        <button class="btn btn-primary" onclick="generateSchedule()">
+            <i class="fas fa-calendar-plus"></i>
+            Generate New Schedule
+        </button>
+    </div>
+    
+    <div class="grid grid-3">
+        <div class="card stat-card">
+            <div class="stat-number">11</div>
+            <div class="stat-label">Active Employees</div>
+        </div>
+        <div class="card stat-card">
+            <div class="stat-number" id="total-shifts">0</div>
+            <div class="stat-label">Shifts This Week</div>
+        </div>
+        <div class="card stat-card">
+            <div class="stat-number" id="pending-requests">0</div>
+            <div class="stat-label">Pending Requests</div>
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-2">
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Weekly Schedule Overview</h2>
+        </div>
+        <div id="schedule-chart"></div>
+    </div>
+    
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Recent Time Off Requests</h2>
+            <a href="/timeoff" class="btn btn-primary">
+                <i class="fas fa-plus"></i>
+                New Request
+            </a>
+        </div>
+        <div id="timeoff-requests"></div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">This Week's Schedule</h2>
+    </div>
+    <div id="weekly-schedule"></div>
+</div>
+
+<!-- Schedule Generation Modal -->
+<div id="schedule-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
+    <div style="background: white; margin: 10% auto; padding: 2rem; border-radius: 16px; max-width: 500px;">
+        <h3>Generate New Schedule</h3>
+        <form id="schedule-form">
+            <div class="form-group">
+                <label class="form-label">Start Date</label>
+                <input type="date" class="form-control" id="start-date" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Number of Weeks</label>
+                <select class="form-control" id="weeks">
+                    <option value="1">1 Week</option>
+                    <option value="2" selected>2 Weeks</option>
+                    <option value="4">4 Weeks</option>
+                </select>
+            </div>
+            <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 2rem;">
+                <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Generate</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let scheduleData = [];
+let timeoffData = [];
+
+// Initialize dashboard
+document.addEventListener('DOMContentLoaded', function() {
+    loadDashboardData();
+    document.getElementById('start-date').value = new Date().toISOString().split('T')[0];
+});
+
+async function loadDashboardData() {
+    try {
+        // Load schedule data
+        const endDate = new Date();
+        endDate.setDate(endDate.getDate() + 7);
+        
+        const scheduleResponse = await apiRequest(`/api/schedule?end_date=${endDate.toISOString().split('T')[0]}`);
+        scheduleData = scheduleResponse;
+        
+        // Load time off requests
+        const timeoffResponse = await apiRequest('/api/timeoff');
+        timeoffData = timeoffResponse;
+        
+        updateDashboard();
+    } catch (error) {
+        console.error('Failed to load dashboard data:', error);
+    }
+}
+
+function updateDashboard() {
+    // Update statistics
+    document.getElementById('total-shifts').textContent = scheduleData.length;
+    document.getElementById('pending-requests').textContent = timeoffData.filter(req => req.status === 'PENDING').length;
+    
+    // Create schedule chart
+    createScheduleChart();
+    
+    // Display recent time off requests
+    displayTimeoffRequests();
+    
+    // Display weekly schedule grid
+    displayWeeklySchedule();
+}
+
+function createScheduleChart() {
+    const shiftCounts = {};
+    const employeeHours = {};
+    
+    scheduleData.forEach(shift => {
+        const date = shift.date;
+        if (!shiftCounts[date]) {
+            shiftCounts[date] = { day: 0, night: 0 };
+        }
+        
+        if (shift.shift_type === 'Day') {
+            shiftCounts[date].day++;
+        } else {
+            shiftCounts[date].night++;
+        }
+        
+        if (!employeeHours[shift.employee_name]) {
+            employeeHours[shift.employee_name] = 0;
+        }
+        employeeHours[shift.employee_name] += shift.hours;
+    });
+    
+    const dates = Object.keys(shiftCounts).sort();
+    const dayShifts = dates.map(date => shiftCounts[date].day);
+    const nightShifts = dates.map(date => shiftCounts[date].night);
+    
+    const data = [
+        {
+            x: dates,
+            y: dayShifts,
+            name: 'Day Shifts',
+            type: 'bar',
+            marker: { color: '#667eea' }
+        },
+        {
+            x: dates,
+            y: nightShifts,
+            name: 'Night Shifts',
+            type: 'bar',
+            marker: { color: '#2d3748' }
+        }
+    ];
+    
+    const layout = {
+        title: 'Daily Shift Distribution',
+        xaxis: { title: 'Date' },
+        yaxis: { title: 'Number of Shifts' },
+        barmode: 'stack',
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        font: { family: 'Inter, sans-serif' }
+    };
+    
+    Plotly.newPlot('schedule-chart', data, layout, {responsive: true});
+}
+
+function displayTimeoffRequests() {
+    const container = document.getElementById('timeoff-requests');
+    const recentRequests = timeoffData.slice(0, 5);
+    
+    if (recentRequests.length === 0) {
+        container.innerHTML = '<p>No recent time off requests.</p>';
+        return;
+    }
+    
+    const html = recentRequests.map(request => `
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; border-bottom: 1px solid #e2e8f0;">
+            <div>
+                <strong>${request.employee_name}</strong>
+                <div style="color: #718096; font-size: 0.875rem;">
+                    ${request.start_date} to ${request.end_date}
+                </div>
+            </div>
+            <span class="status-badge status-${request.status.toLowerCase()}">${request.status}</span>
+        </div>
+    `).join('');
+    
+    container.innerHTML = html;
+}
+
+function displayWeeklySchedule() {
+    const container = document.getElementById('weekly-schedule');
+    const today = new Date();
+    const startOfWeek = new Date(today.setDate(today.getDate() - today.getDay()));
+    
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+        const date = new Date(startOfWeek);
+        date.setDate(startOfWeek.getDate() + i);
+        days.push(date);
+    }
+    
+    const scheduleGrid = days.map(date => {
+        const dateStr = date.toISOString().split('T')[0];
+        const dayShifts = scheduleData.filter(shift => shift.date === dateStr);
+        
+        const shiftsHtml = dayShifts.map(shift => `
+            <div class="shift-item ${shift.shift_type.toLowerCase() === 'night' ? 'shift-night' : ''} ${shift.role === 'PATTY' ? 'shift-lead' : ''}">
+                ${shift.employee_name} - ${shift.role}
+            </div>
+        `).join('');
+        
+        return `
+            <div class="schedule-day">
+                <div class="schedule-day-header">
+                    ${date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                </div>
+                ${shiftsHtml}
+            </div>
+        `;
+    }).join('');
+    
+    container.innerHTML = `<div class="schedule-grid">${scheduleGrid}</div>`;
+}
+
+function generateSchedule() {
+    document.getElementById('schedule-modal').style.display = 'block';
+}
+
+function closeModal() {
+    document.getElementById('schedule-modal').style.display = 'none';
+}
+
+// Handle schedule form submission
+document.getElementById('schedule-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const startDate = document.getElementById('start-date').value;
+    const weeks = document.getElementById('weeks').value;
+    
+    try {
+        const response = await apiRequest('/api/schedule/generate', {
+            method: 'POST',
+            body: JSON.stringify({
+                start_date: startDate,
+                weeks: parseInt(weeks)
+            })
+        });
+        
+        if (response.success) {
+            showAlert('Schedule generated successfully!');
+            closeModal();
+            loadDashboardData(); // Refresh the dashboard
+        } else {
+            showAlert('Failed to generate schedule: ' + response.error, 'danger');
+        }
+    } catch (error) {
+        console.error('Schedule generation failed:', error);
+    }
+});
+
+// Close modal when clicking outside
+window.onclick = function(event) {
+    const modal = document.getElementById('schedule-modal');
+    if (event.target === modal) {
+        closeModal();
+    }
+}
+</script>
+{% endblock %}

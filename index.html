@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hospital PBX Scheduling System</title>
+    <meta http-equiv="refresh" content="0; url=dashboard.html">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 0;
+            color: white;
+        }
+        .loading-container {
+            text-align: center;
+        }
+        .loading-icon {
+            font-size: 4rem;
+            margin-bottom: 2rem;
+            animation: pulse 2s infinite;
+        }
+        .loading-text {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        .loading-subtext {
+            font-size: 1rem;
+            opacity: 0.8;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-container">
+        <div class="loading-icon">
+            <i class="fas fa-hospital"></i>
+        </div>
+        <div class="loading-text">Hospital PBX Scheduling System</div>
+        <div class="loading-subtext">Loading dashboard...</div>
+        <div style="margin-top: 2rem;">
+            <a href="dashboard.html" style="color: white; text-decoration: none; border: 2px solid white; padding: 1rem 2rem; border-radius: 8px;">
+                <i class="fas fa-arrow-right"></i> Enter Dashboard
+            </a>
+        </div>
+    </div>
+    
+    <script>
+        // Redirect to dashboard after 3 seconds if not manually clicked
+        setTimeout(function() {
+            window.location.href = 'dashboard.html';
+        }, 3000);
+    </script>
+</body>
+</html>
