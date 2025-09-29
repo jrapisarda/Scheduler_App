@@ -1,0 +1,149 @@
+.......FFFF
+====================================================== FAILURES =======================================================
+______________________________________________ test_employees_crud_flow _______________________________________________
+
+client = <FlaskClient <Flask 'app_fixed'>>, caplog = <_pytest.logging.LogCaptureFixture object at 0x0000015E1EB7D810>
+
+    def test_employees_crud_flow(client, caplog):
+        caplog.set_level(logging.INFO)
+
+        # Initial list (from seed)
+        r = client.get("/api/employees")
+        assert json_ok(r), f"/api/employees GET failed: {r.json}"
+>       seed_count = r.json["count"]
+E       KeyError: 'count'
+
+pytest_scheduler.py:130: KeyError
+______________________________________ test_timeoff_and_generation_respects_pto _______________________________________
+
+client = <FlaskClient <Flask 'app_fixed'>>, caplog = <_pytest.logging.LogCaptureFixture object at 0x0000015E1EB7F880>
+
+    def test_timeoff_and_generation_respects_pto(client, caplog):
+        caplog.set_level(logging.INFO)
+
+        # choose an existing day-shift-friendly employee (Patty or Mayra/Lisa/Dan)
+        with app.app_context():
+            emp_day = Employee.query.filter_by(name="Mayra Bradley").first()
+            assert emp_day is not None
+
+        start_monday = next_week_monday()
+        pto_day = start_monday  # PTO on the first day we will generate
+
+        # Create PTO (DAY only) for that date
+        r = client.post("/api/timeoff", json={
+            "employee_id": emp_day.id,
+            "start_date": pto_day.isoformat(),
+            "end_date": pto_day.isoformat(),
+            "shift_type": "DAY",
+            "reason": "Test PTO"
+        })
+        assert r.status_code == 201 and r.json.get("success"), f"Create PTO failed: {r.json}"
+        pto_id = r.json["request"]["id"]
+
+        # Approve the PTO
+        r = client.put(f"/api/timeoff/{pto_id}/approve")
+        assert json_ok(r), f"PTO approve failed: {r.json}"
+
+        # Generate 1 week schedule that includes the PTO date
+        r = client.post("/api/schedule/generate", json={
+            "start_date": start_monday.isoformat(),
+            "weeks": 1
+        })
+
+        # NOTE: If this test fails HERE with 500 and a message referencing
+        # `_assign_shifts_with_fair_distribution`, your agent needs to fix the
+        # function to use the `available_employees` parameter instead of
+        # undefined `available_day_employees`/`available_night_employees`.
+>       assert r.status_code == 200 and r.is_json, f"Schedule generation HTTP failed: {r.data}"
+E       AssertionError: Schedule generation HTTP failed: b'{"error":"name \'available_day_employees\' is not defined","success":false}\n'
+E       assert (500 == 200)
+E        +  where 500 = <WrapperTestResponse streamed [500 INTERNAL SERVER ERROR]>.status_code
+
+pytest_scheduler.py:215: AssertionError
+-------------------------------------------------- Captured log call --------------------------------------------------
+INFO     app_fixed:app_fixed.py:649 Creating time off request: {'employee_id': 4, 'end_date': '2025-09-29', 'reason': 'Test PTO', 'shift_type': 'DAY', 'start_date': '2025-09-29'}
+INFO     app_fixed:app_fixed.py:662 Successfully created time off request for employee Mayra Bradley
+INFO     app_fixed:app_fixed.py:682 Approved time off request 1 for Mayra Bradley
+INFO     app_fixed:app_fixed.py:587 Generating schedule for 1 weeks starting 2025-09-29
+INFO     app_fixed:app_fixed.py:596 Cleared 0 existing schedules
+INFO     app_fixed:app_fixed.py:193 Starting schedule generation for 7 days from 2025-09-29
+INFO     app_fixed:app_fixed.py:197 Found 6 active employees
+INFO     app_fixed:app_fixed.py:205 Found 1 approved time off requests
+ERROR    app_fixed:app_fixed.py:269 Error generating schedule with PTO reshuffling: name 'available_day_employees' is not defined
+ERROR    app_fixed:app_fixed.py:625 Error generating schedule: name 'available_day_employees' is not defined
+_______________________________________________ test_shift_trades_flow ________________________________________________
+
+client = <FlaskClient <Flask 'app_fixed'>>, caplog = <_pytest.logging.LogCaptureFixture object at 0x0000015E1EBFE650>
+
+    def test_shift_trades_flow(client, caplog):
+        caplog.set_level(logging.INFO)
+
+        start_monday = next_week_monday()
+
+        # Generate 1 week schedule to ensure there are shifts to trade
+        r = client.post("/api/schedule/generate", json={
+            "start_date": start_monday.isoformat(),
+            "weeks": 1
+        })
+>       assert r.status_code == 200 and r.is_json, f"Schedule generation HTTP failed: {r.data}"
+E       AssertionError: Schedule generation HTTP failed: b'{"error":"name \'available_day_employees\' is not defined","success":false}\n'
+E       assert (500 == 200)
+E        +  where 500 = <WrapperTestResponse streamed [500 INTERNAL SERVER ERROR]>.status_code
+
+pytest_scheduler.py:249: AssertionError
+-------------------------------------------------- Captured log call --------------------------------------------------
+INFO     app_fixed:app_fixed.py:587 Generating schedule for 1 weeks starting 2025-09-29
+INFO     app_fixed:app_fixed.py:596 Cleared 0 existing schedules
+INFO     app_fixed:app_fixed.py:193 Starting schedule generation for 7 days from 2025-09-29
+INFO     app_fixed:app_fixed.py:197 Found 6 active employees
+INFO     app_fixed:app_fixed.py:205 Found 0 approved time off requests
+ERROR    app_fixed:app_fixed.py:269 Error generating schedule with PTO reshuffling: name 'available_day_employees' is not defined
+ERROR    app_fixed:app_fixed.py:625 Error generating schedule: name 'available_day_employees' is not defined
+__________________________________________ test_get_employee_shifts_endpoint __________________________________________
+
+client = <FlaskClient <Flask 'app_fixed'>>, caplog = <_pytest.logging.LogCaptureFixture object at 0x0000015E1CB77D60>
+
+    def test_get_employee_shifts_endpoint(client, caplog):
+        caplog.set_level(logging.INFO)
+
+        # pick an existing employee
+        with app.app_context():
+            any_emp = Employee.query.filter_by(active=True).first()
+            assert any_emp is not None
+
+        start_monday = next_week_monday()
+        # Ensure schedule exists for the window
+        r = client.post("/api/schedule/generate", json={
+            "start_date": start_monday.isoformat(),
+            "weeks": 1
+        })
+>       assert r.status_code == 200 and r.is_json, f"Schedule generation HTTP failed: {r.data}"
+E       AssertionError: Schedule generation HTTP failed: b'{"error":"name \'available_day_employees\' is not defined","success":false}\n'
+E       assert (500 == 200)
+E        +  where 500 = <WrapperTestResponse streamed [500 INTERNAL SERVER ERROR]>.status_code
+
+pytest_scheduler.py:326: AssertionError
+-------------------------------------------------- Captured log call --------------------------------------------------
+INFO     app_fixed:app_fixed.py:587 Generating schedule for 1 weeks starting 2025-09-29
+INFO     app_fixed:app_fixed.py:596 Cleared 0 existing schedules
+INFO     app_fixed:app_fixed.py:193 Starting schedule generation for 7 days from 2025-09-29
+INFO     app_fixed:app_fixed.py:197 Found 6 active employees
+INFO     app_fixed:app_fixed.py:205 Found 0 approved time off requests
+ERROR    app_fixed:app_fixed.py:269 Error generating schedule with PTO reshuffling: name 'available_day_employees' is not defined
+ERROR    app_fixed:app_fixed.py:625 Error generating schedule: name 'available_day_employees' is not defined
+================================================== warnings summary ===================================================
+pytest_scheduler.py: 11 warnings
+  C:\venvs\git\Scheduler\Scheduler_App\pytest_scheduler.py:81: SAWarning: Identity map already had an identity for (<class 'app_fixed.Employee'>, (1,), None), replacing it with newly flushed object.   Are there load operations occurring inside of an event handler within the flush?
+    db.session.commit()
+
+pytest_scheduler.py::test_timeoff_and_generation_respects_pto
+  C:\venvs\ref310\lib\site-packages\flask_sqlalchemy\query.py:30: LegacyAPIWarning: The Query.get() method is considered legacy as of the 1.x series of SQLAlchemy and becomes a legacy construct in 2.0. The method is now available as Session.get() (deprecated since: 2.0) (Background on SQLAlchemy 2.0 at: https://sqlalche.me/e/b8d9)
+    rv = self.get(ident)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=============================================== short test summary info ===============================================
+FAILED pytest_scheduler.py::test_employees_crud_flow - KeyError: 'count'
+FAILED pytest_scheduler.py::test_timeoff_and_generation_respects_pto - AssertionError: Schedule generation HTTP failed: b'{"error":"name \'available_day_employees\' is not defined","succ...
+FAILED pytest_scheduler.py::test_shift_trades_flow - AssertionError: Schedule generation HTTP failed: b'{"error":"name \'available_day_employees\' is not defined","succ...
+FAILED pytest_scheduler.py::test_get_employee_shifts_endpoint - AssertionError: Schedule generation HTTP failed: b'{"error":"name \'available_day_employees\' is not defined","succ...
+4 failed, 7 passed, 12 warnings in 1.14s
