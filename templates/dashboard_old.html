@@ -12,7 +12,7 @@
     
     <div class="grid grid-3">
         <div class="card stat-card">
-            <div class="stat-number" id="active-employees">0</div>  <!-- Changed from hardcoded 11 -->
+            <div class="stat-number">11</div>
             <div class="stat-label">Active Employees</div>
         </div>
         <div class="card stat-card">
@@ -83,7 +83,6 @@
 <script>
 let scheduleData = [];
 let timeoffData = [];
-let employeesData = [];
 
 // Initialize dashboard
 document.addEventListener('DOMContentLoaded', function() {
@@ -93,27 +92,16 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function loadDashboardData() {
     try {
-        // Load employees data
-        const employeesResponse = await apiRequest('/api/employees');
-        if (employeesResponse.success) {
-            employeesData = employeesResponse.employees;
-            document.getElementById('active-employees').textContent = employeesResponse.count;
-        }
-
         // Load schedule data
         const endDate = new Date();
         endDate.setDate(endDate.getDate() + 7);
         
         const scheduleResponse = await apiRequest(`/api/schedule?end_date=${endDate.toISOString().split('T')[0]}`);
-        if (scheduleResponse.success) {
-            scheduleData = scheduleResponse.schedules; // Fixed: use schedules array
-        }
+        scheduleData = scheduleResponse;
         
         // Load time off requests
         const timeoffResponse = await apiRequest('/api/timeoff');
-        if (timeoffResponse.success) {
-            timeoffData = timeoffResponse.requests; // Fixed: use requests array
-        }
+        timeoffData = timeoffResponse;
         
         updateDashboard();
     } catch (error) {
@@ -141,12 +129,12 @@ function createScheduleChart() {
     const employeeHours = {};
     
     scheduleData.forEach(shift => {
-        const date = shift.schedule_date; // Fixed: use schedule_date
+        const date = shift.date;
         if (!shiftCounts[date]) {
             shiftCounts[date] = { day: 0, night: 0 };
         }
         
-        if (shift.shift_type === 'DAY') { // Fixed: match backend shift_type values
+        if (shift.shift_type === 'Day') {
             shiftCounts[date].day++;
         } else {
             shiftCounts[date].night++;
@@ -155,23 +143,12 @@ function createScheduleChart() {
         if (!employeeHours[shift.employee_name]) {
             employeeHours[shift.employee_name] = 0;
         }
-        // Calculate hours from shift times
-        const start = new Date(`1970-01-01T${shift.shift_start}`);
-        const end = new Date(`1970-01-01T${shift.shift_end}`);
-        let hours = (end - start) / (1000 * 60 * 60);
-        if (hours < 0) hours += 24; // Handle overnight shifts
-        employeeHours[shift.employee_name] += hours;
+        employeeHours[shift.employee_name] += shift.hours;
     });
     
     const dates = Object.keys(shiftCounts).sort();
     const dayShifts = dates.map(date => shiftCounts[date].day);
     const nightShifts = dates.map(date => shiftCounts[date].night);
-    
-    // Only create chart if we have data
-    if (dates.length === 0) {
-        document.getElementById('schedule-chart').innerHTML = '<p>No schedule data available. Generate a schedule first.</p>';
-        return;
-    }
     
     const data = [
         {
@@ -236,25 +213,25 @@ function displayWeeklySchedule() {
     for (let i = 0; i < 7; i++) {
         const date = new Date(startOfWeek);
         date.setDate(startOfWeek.getDate() + i);
-        days.push(date.toISOString().split('T')[0]); // Store as YYYY-MM-DD
+        days.push(date);
     }
     
     const scheduleGrid = days.map(date => {
-        const dayShifts = scheduleData.filter(shift => shift.schedule_date === date);
+        const dateStr = date.toISOString().split('T')[0];
+        const dayShifts = scheduleData.filter(shift => shift.date === dateStr);
         
         const shiftsHtml = dayShifts.map(shift => `
             <div class="shift-item ${shift.shift_type.toLowerCase() === 'night' ? 'shift-night' : ''} ${shift.role === 'PATTY' ? 'shift-lead' : ''}">
-                ${shift.employee_name} - ${shift.role} (${shift.shift_start} - ${shift.shift_end})
+                ${shift.employee_name} - ${shift.role}
             </div>
         `).join('');
         
-        const displayDate = new Date(date);
         return `
             <div class="schedule-day">
                 <div class="schedule-day-header">
-                    ${displayDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                    ${date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
                 </div>
-                ${shiftsHtml || '<div style="padding: 0.5rem; color: #718096; font-style: italic;">No shifts</div>'}
+                ${shiftsHtml}
             </div>
         `;
     }).join('');
@@ -295,7 +272,6 @@ document.getElementById('schedule-form').addEventListener('submit', async functi
         }
     } catch (error) {
         console.error('Schedule generation failed:', error);
-        showAlert('Error generating schedule: ' + error.message, 'danger');
     }
 });
 

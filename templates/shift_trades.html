@@ -14,7 +14,7 @@
                 </select>
             </div>
             <div class="form-group">
-                <label class="form-label">Shift to Trade *</label>
+                <label class="form-label">Your Shift *</label>
                 <select class="form-control" id="original-shift" required>
                     <option value="">Select your shift</option>
                 </select>
@@ -116,15 +116,24 @@ document.addEventListener('DOMContentLoaded', function() {
     loadEmployees();
     loadShiftTrades();
     document.getElementById('status-filter').addEventListener('change', filterTrades);
+    
+    // Add event listeners for employee selection
+    document.getElementById('requesting-employee').addEventListener('change', loadRequestingEmployeeShifts);
+    document.getElementById('target-employee').addEventListener('change', loadTargetEmployeeShifts);
 });
 
 async function loadEmployees() {
     try {
         const response = await apiRequest('/api/employees');
-        employees = response;
-        populateEmployeeSelects();
+        
+        if (response.success) {
+            employees = response.employees;
+            populateEmployeeSelects();
+        } else {
+            console.error('Failed to load employees:', response.error);
+        }
     } catch (error) {
-        console.error('Failed to load employees:', error);
+        console.error('Error loading employees:', error);
     }
 }
 
@@ -148,37 +157,63 @@ function populateEmployeeSelects() {
     });
 }
 
+async function loadRequestingEmployeeShifts() {
+    const employeeId = document.getElementById('requesting-employee').value;
+    if (!employeeId) return;
+    
+    try {
+        const response = await apiRequest(`/api/employees/${employeeId}/shifts`);
+        
+        if (response.success) {
+            populateShiftSelect('original-shift', response.shifts);
+        }
+    } catch (error) {
+        console.error('Error loading requesting employee shifts:', error);
+    }
+}
+
+async function loadTargetEmployeeShifts() {
+    const employeeId = document.getElementById('target-employee').value;
+    if (!employeeId) return;
+    
+    try {
+        const response = await apiRequest(`/api/employees/${employeeId}/shifts`);
+        
+        if (response.success) {
+            populateShiftSelect('target-shift', response.shifts);
+        }
+    } catch (error) {
+        console.error('Error loading target employee shifts:', error);
+    }
+}
+
+function populateShiftSelect(selectId, shifts) {
+    const select = document.getElementById(selectId);
+    select.innerHTML = '<option value="">Select shift</option>';
+    
+    shifts.forEach(shift => {
+        const option = document.createElement('option');
+        option.value = shift.id;
+        option.textContent = `${shift.schedule_date} ${shift.shift_type} (${shift.role})`;
+        select.appendChild(option);
+    });
+}
+
 async function loadShiftTrades() {
     try {
-        // For now, we'll use mock data
-        // In a real implementation, this would call the API
-        shiftTrades = [
-            {
-                id: 1,
-                requesting_employee_name: 'Lisa Dixon',
-                target_employee_name: 'Shala Johnson',
-                original_shift: '2025-10-05 Day D1',
-                target_shift: '2025-10-06 Day D2',
-                reason: 'Family emergency',
-                status: 'PENDING',
-                created_at: '2025-09-28T10:30:00'
-            },
-            {
-                id: 2,
-                requesting_employee_name: 'Chloe Gray',
-                target_employee_name: 'Tash Jaramillo',
-                original_shift: '2025-10-07 Night N3',
-                target_shift: '2025-10-08 Night N2',
-                reason: 'Medical appointment',
-                status: 'APPROVED',
-                created_at: '2025-09-27T14:15:00'
-            }
-        ];
+        console.log('Loading shift trades...');
+        const response = await apiRequest('/api/trades');
         
-        displayShiftTrades();
-        updateStatistics();
+        if (response.success) {
+            shiftTrades = response.trades;
+            displayShiftTrades();
+        } else {
+            console.error('Failed to load shift trades:', response.error);
+            showAlert('Failed to load shift trades.', 'danger');
+        }
     } catch (error) {
-        console.error('Failed to load shift trades:', error);
+        console.error('Error loading shift trades:', error);
+        showAlert('Error loading shift trades.', 'danger');
     }
 }
 
@@ -190,13 +225,17 @@ function displayShiftTrades() {
         return;
     }
     
-    const html = shiftTrades.map(trade => `
+    const html = shiftTrades.map(trade => {
+        const originalShift = trade.original_shift || 'Shift not found';
+        const tradeShift = trade.trade_shift || 'Shift not found';
+    
+        return `
         <tr>
             <td>${trade.requesting_employee_name}</td>
-            <td>${trade.original_shift}</td>
             <td>${trade.target_employee_name}</td>
-            <td>${trade.target_shift}</td>
-            <td>${trade.reason || 'No reason provided'}</td>
+            <td>${originalShift}</td>
+            <td>${tradeShift}</td>
+            <td>${trade.trade_reason || 'No reason provided'}</td>
             <td>
                 <span class="status-badge status-${trade.status.toLowerCase()}">
                     ${trade.status}
@@ -217,7 +256,7 @@ function displayShiftTrades() {
                 ` : ''}
             </td>
         </tr>
-    `).join('');
+    `}).join('');
     
     tbody.innerHTML = html;
 }
@@ -287,10 +326,10 @@ function viewTradeDetails(tradeId) {
             <label><strong>Trade With:</strong> ${trade.target_employee_name}</label>
         </div>
         <div class="form-group">
-            <label><strong>Target Shift:</strong> ${trade.target_shift}</label>
+            <label><strong>Target Shift:</strong> ${trade.trade_shift}</label>
         </div>
         <div class="form-group">
-            <label><strong>Reason:</strong> ${trade.reason || 'No reason provided'}</label>
+            <label><strong>Reason:</strong> ${trade.trade_reason || 'No reason provided'}</label>
         </div>
         <div class="form-group">
             <label><strong>Status:</strong> 
@@ -329,24 +368,25 @@ async function approveTrade(tradeId = null) {
     const id = tradeId || currentTradeId;
     if (!id) return;
     
-    if (!confirm('Are you sure you want to approve this trade?')) {
+    if (!confirm('Are you sure you want to approve this trade? This will swap the shifts between the two employees.')) {
         return;
     }
     
     try {
-        // For now, we'll just update the local data
-        // In a real implementation, this would call the API
-        const trade = shiftTrades.find(t => t.id === id);
-        if (trade) {
-            trade.status = 'APPROVED';
-            showAlert('Trade approved successfully!');
-            displayShiftTrades();
-            updateStatistics();
+        const response = await apiRequest(`/api/trades/${id}/approve`, {
+            method: 'PUT'
+        });
+        
+        if (response.success) {
+            showAlert('Trade approved successfully! Shifts have been swapped.');
             closeTradeModal();
+            loadShiftTrades(); // Refresh the list
+        } else {
+            showAlert('Failed to approve trade: ' + (response.error || 'Unknown error'), 'danger');
         }
     } catch (error) {
-        console.error('Failed to approve trade:', error);
-        showAlert('Failed to approve trade.', 'danger');
+        console.error('Error approving trade:', error);
+        showAlert('Error approving trade.', 'danger');
     }
 }
 
@@ -359,19 +399,20 @@ async function denyTrade(tradeId = null) {
     }
     
     try {
-        // For now, we'll just update the local data
-        // In a real implementation, this would call the API
-        const trade = shiftTrades.find(t => t.id === id);
-        if (trade) {
-            trade.status = 'DENIED';
+        const response = await apiRequest(`/api/trades/${id}/deny`, {
+            method: 'PUT'
+        });
+        
+        if (response.success) {
             showAlert('Trade denied successfully!');
-            displayShiftTrades();
-            updateStatistics();
             closeTradeModal();
+            loadShiftTrades(); // Refresh the list
+        } else {
+            showAlert('Failed to deny trade: ' + (response.error || 'Unknown error'), 'danger');
         }
     } catch (error) {
-        console.error('Failed to deny trade:', error);
-        showAlert('Failed to deny trade.', 'danger');
+        console.error('Error denying trade:', error);
+        showAlert('Error denying trade.', 'danger');
     }
 }
 
@@ -397,33 +438,34 @@ document.getElementById('trade-form').addEventListener('submit', async function(
     const tradeData = {
         requesting_employee_id: parseInt(requestingEmployee),
         target_employee_id: parseInt(targetEmployee),
-        original_shift: originalShift,
-        target_shift: targetShift,
-        reason: document.getElementById('trade-reason').value
+        original_schedule_id: parseInt(originalShift),
+        trade_schedule_id: parseInt(targetShift),
+        trade_reason: document.getElementById('trade-reason').value
     };
     
+    console.log('Submitting trade request:', tradeData);
+    
     try {
-        // For now, we'll just add to local data
-        // In a real implementation, this would call the API
-        const newTrade = {
-            id: shiftTrades.length + 1,
-            requesting_employee_name: employees.find(e => e.id == requestingEmployee).name,
-            target_employee_name: employees.find(e => e.id == targetEmployee).name,
-            original_shift: originalShift,
-            target_shift: targetShift,
-            reason: tradeData.reason,
-            status: 'PENDING',
-            created_at: new Date().toISOString()
-        };
+        const response = await apiRequest('/api/trades', {
+            method: 'POST',
+            body: JSON.stringify(tradeData)
+        });
         
-        shiftTrades.unshift(newTrade);
-        showAlert('Shift trade request submitted successfully!');
-        document.getElementById('trade-form').reset();
-        displayShiftTrades();
-        updateStatistics();
+        console.log('Trade response:', response);
+        
+        if (response.success) {
+            showAlert('Shift trade request submitted successfully!');
+            document.getElementById('trade-form').reset();
+            // Reset shift selects
+            document.getElementById('original-shift').innerHTML = '<option value="">Select your shift</option>';
+            document.getElementById('target-shift').innerHTML = '<option value="">Select their shift</option>';
+            loadShiftTrades(); // Refresh the list
+        } else {
+            showAlert('Failed to submit trade request: ' + (response.error || 'Unknown error'), 'danger');
+        }
     } catch (error) {
-        console.error('Failed to submit trade request:', error);
-        showAlert('Failed to submit trade request.', 'danger');
+        console.error('Error submitting trade request:', error);
+        showAlert('Error submitting trade request.', 'danger');
     }
 });
 

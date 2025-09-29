@@ -108,10 +108,15 @@ document.addEventListener('DOMContentLoaded', function() {
 async function loadEmployees() {
     try {
         const response = await apiRequest('/api/employees');
-        employees = response;
-        populateEmployeeSelect();
+        
+        if (response.success) {
+            employees = response.employees;
+            populateEmployeeSelect();
+        } else {
+            console.error('Failed to load employees:', response.error);
+        }
     } catch (error) {
-        console.error('Failed to load employees:', error);
+        console.error('Error loading employees:', error);
     }
 }
 
@@ -130,15 +135,20 @@ function populateEmployeeSelect() {
 async function loadTimeoffRequests() {
     try {
         const response = await apiRequest('/api/timeoff');
-        timeoffRequests = response;
-        displayRequests();
-        displayTimeoffCalendar();
+        
+        if (response.success) {
+            timeoffRequests = response.requests;
+            displayTimeoffRequests();
+            displayTimeoffCalendar();
+        } else {
+            console.error('Failed to load time off requests:', response.error);
+        }
     } catch (error) {
-        console.error('Failed to load time off requests:', error);
+        console.error('Error loading time off requests:', error);
     }
 }
 
-function displayRequests() {
+function displayTimeoffRequests() {
     const tbody = document.getElementById('requests-table');
     
     if (timeoffRequests.length === 0) {
@@ -207,10 +217,11 @@ async function approveRequest(requestId) {
             showAlert('Time off request approved successfully!');
             loadTimeoffRequests(); // Refresh the list
         } else {
-            showAlert('Failed to approve request.', 'danger');
+            showAlert('Failed to approve request: ' + (response.error || 'Unknown error'), 'danger');
         }
     } catch (error) {
-        console.error('Failed to approve request:', error);
+        console.error('Error approving request:', error);
+        showAlert('Error approving request.', 'danger');
     }
 }
 
@@ -228,10 +239,11 @@ async function denyRequest(requestId) {
             showAlert('Time off request denied successfully!');
             loadTimeoffRequests(); // Refresh the list
         } else {
-            showAlert('Failed to deny request.', 'danger');
+            showAlert('Failed to deny request: ' + (response.error || 'Unknown error'), 'danger');
         }
     } catch (error) {
-        console.error('Failed to deny request:', error);
+        console.error('Error denying request:', error);
+        showAlert('Error denying request.', 'danger');
     }
 }
 
@@ -311,21 +323,27 @@ document.getElementById('timeoff-form').addEventListener('submit', async functio
         reason: document.getElementById('reason').value
     };
     
+    console.log('Submitting time off request:', requestData);
+    
     try {
         const response = await apiRequest('/api/timeoff', {
             method: 'POST',
             body: JSON.stringify(requestData)
         });
         
+        console.log('Time off response:', response);
+        
         if (response.success) {
             showAlert('Time off request submitted successfully!');
             document.getElementById('timeoff-form').reset();
+            populateEmployeeSelect(); // Reset employee select
             loadTimeoffRequests(); // Refresh the list
         } else {
-            showAlert('Failed to submit request.', 'danger');
+            showAlert('Failed to submit request: ' + (response.error || 'Unknown error'), 'danger');
         }
     } catch (error) {
-        console.error('Failed to submit request:', error);
+        console.error('Error submitting request:', error);
+        showAlert('Error submitting request.', 'danger');
     }
 });
 </script>

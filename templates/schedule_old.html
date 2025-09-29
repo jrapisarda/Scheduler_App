@@ -84,51 +84,40 @@ let currentWeekStart = null;
 document.addEventListener('DOMContentLoaded', function() {
     // Set default week to current week
     const now = new Date();
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() - now.getDay());
-    
-    // Format for week input (YYYY-Www)
-    const year = startOfWeek.getFullYear();
-    const week = Math.ceil((startOfWeek.getDate() + 6 - startOfWeek.getDay()) / 7);
-    document.getElementById('week-selector').value = `${year}-W${week.toString().padStart(2, '0')}`;
+    const startOfWeek = new Date(now.setDate(now.getDate() - now.getDay()));
+    const weekString = `${startOfWeek.getFullYear()}-W${Math.ceil((startOfWeek.getDate() + startOfWeek.getDay()) / 7)}`;
+    document.getElementById('week-selector').value = weekString;
     
     loadSchedule();
 });
-
-function getWeekStartDate(year, week) {
-    const janFirst = new Date(year, 0, 1);
-    const daysToAdd = (week - 1) * 7 - janFirst.getDay();
-    const startDate = new Date(janFirst);
-    startDate.setDate(janFirst.getDate() + daysToAdd);
-    return startDate;
-}
 
 async function loadSchedule() {
     const weekInput = document.getElementById('week-selector').value;
     if (!weekInput) return;
     
+    // Parse week input to get start date
+    const [year, week] = weekInput.split('-W');
+    const startDate = getWeekStartDate(parseInt(year), parseInt(week));
+    const endDate = new Date(startDate);
+    endDate.setDate(startDate.getDate() + 6);
+    
+    currentWeekStart = startDate;
+    
     try {
-        // Parse week input to get start date
-        const [year, weekNum] = weekInput.split('-W');
-        const startDate = getWeekStartDate(parseInt(year), parseInt(weekNum));
-        const endDate = new Date(startDate);
-        endDate.setDate(startDate.getDate() + 6);
-        
-        currentWeekStart = startDate;
-        
         const response = await apiRequest(`/api/schedule?start_date=${startDate.toISOString().split('T')[0]}&end_date=${endDate.toISOString().split('T')[0]}`);
-        
-        if (response.success) {
-            currentSchedule = response.schedules; // Fixed: use schedules array
-            displaySchedule();
-        } else {
-            console.error('Failed to load schedule:', response.error);
-            showAlert('Failed to load schedule: ' + response.error, 'danger');
-        }
+        currentSchedule = response;
+        displaySchedule();
     } catch (error) {
         console.error('Failed to load schedule:', error);
-        showAlert('Error loading schedule: ' + error.message, 'danger');
     }
+}
+
+function getWeekStartDate(year, week) {
+    const janFirst = new Date(year, 0, 1);
+    const days = (week - 1) * 7;
+    const startDate = new Date(janFirst);
+    startDate.setDate(janFirst.getDate() + days - janFirst.getDay());
+    return startDate;
 }
 
 function displaySchedule() {
@@ -136,15 +125,6 @@ function displaySchedule() {
     displayDetailedTable();
     displayCoverageChart();
     displayHoursChart();
-}
-
-function calculateShiftHours(startTime, endTime) {
-    // Calculate hours from time strings
-    const start = new Date(`1970-01-01T${startTime}`);
-    const end = new Date(`1970-01-01T${endTime}`);
-    let hours = (end - start) / (1000 * 60 * 60);
-    if (hours < 0) hours += 24; // Handle overnight shifts
-    return Math.round(hours * 10) / 10; // Round to 1 decimal
 }
 
 function displayScheduleGrid() {
@@ -159,17 +139,17 @@ function displayScheduleGrid() {
     
     const gridHtml = days.map(date => {
         const dateStr = date.toISOString().split('T')[0];
-        const dayShifts = currentSchedule.filter(shift => shift.schedule_date === dateStr); // Fixed: use schedule_date
+        const dayShifts = currentSchedule.filter(shift => shift.date === dateStr);
         
-        const dayShiftsHtml = dayShifts.filter(shift => shift.shift_type === 'DAY').map(shift => ` // Fixed: use 'DAY'
+        const dayShiftsHtml = dayShifts.filter(shift => shift.shift_type === 'Day').map(shift => `
             <div class="shift-item">
-                ${shift.employee_name} - ${shift.role} (${shift.shift_start}-${shift.shift_end})
+                ${shift.employee_name} - ${shift.role}
             </div>
         `).join('');
         
-        const nightShiftsHtml = dayShifts.filter(shift => shift.shift_type === 'NIGHT').map(shift => ` // Fixed: use 'NIGHT'
+        const nightShiftsHtml = dayShifts.filter(shift => shift.shift_type === 'Night').map(shift => `
             <div class="shift-item shift-night">
-                ${shift.employee_name} - ${shift.role} (${shift.shift_start}-${shift.shift_end})
+                ${shift.employee_name} - ${shift.role}
             </div>
         `).join('');
         
@@ -201,19 +181,15 @@ function displayDetailedTable() {
         return;
     }
     
-    const html = currentSchedule.map(shift => {
-        const hours = calculateShiftHours(shift.shift_start, shift.shift_end);
-        const shiftTypeDisplay = shift.shift_type === 'DAY' ? 'Day' : 'Night'; // Convert to display format
-        
-        return `
+    const html = currentSchedule.map(shift => `
         <tr>
-            <td>${new Date(shift.schedule_date).toLocaleDateString()}</td> <!-- Fixed: use schedule_date -->
+            <td>${new Date(shift.date).toLocaleDateString()}</td>
             <td>${shift.employee_name}</td>
-            <td>${shiftTypeDisplay}</td> <!-- Use converted display format -->
+            <td>${shift.shift_type}</td>
             <td>${shift.role}</td>
-            <td>${shift.shift_start}</td>
-            <td>${shift.shift_end}</td>
-            <td>${hours}</td>
+            <td>${shift.start_time}</td>
+            <td>${shift.end_time}</td>
+            <td>${shift.hours}</td>
             <td>
                 ${shift.is_overtime ? 
                     '<span class="status-badge status-pending" style="background: #fed7d7; color: #c53030;">OT</span>' : 
@@ -221,8 +197,7 @@ function displayDetailedTable() {
                 }
             </td>
         </tr>
-        `;
-    }).join('');
+    `).join('');
     
     tbody.innerHTML = html;
 }
@@ -231,8 +206,8 @@ function displayCoverageChart() {
     const coverageData = {};
     
     currentSchedule.forEach(shift => {
-        const date = shift.schedule_date; // Fixed: use schedule_date
-        const shiftType = shift.shift_type === 'DAY' ? 'Day' : 'Night'; // Convert for display
+        const date = shift.date;
+        const shiftType = shift.shift_type;
         
         if (!coverageData[date]) {
             coverageData[date] = { Day: 0, Night: 0 };
@@ -242,13 +217,6 @@ function displayCoverageChart() {
     });
     
     const dates = Object.keys(coverageData).sort();
-    
-    // Only create chart if we have data
-    if (dates.length === 0) {
-        document.getElementById('coverage-chart').innerHTML = '<p>No schedule data available. Generate a schedule first.</p>';
-        return;
-    }
-    
     const dayCoverage = dates.map(date => coverageData[date].Day);
     const nightCoverage = dates.map(date => coverageData[date].Night);
     
@@ -289,18 +257,10 @@ function displayHoursChart() {
         if (!employeeHours[shift.employee_name]) {
             employeeHours[shift.employee_name] = 0;
         }
-        const hours = calculateShiftHours(shift.shift_start, shift.shift_end);
-        employeeHours[shift.employee_name] += hours;
+        employeeHours[shift.employee_name] += shift.hours;
     });
     
     const employees = Object.keys(employeeHours);
-    
-    // Only create chart if we have data
-    if (employees.length === 0) {
-        document.getElementById('hours-chart').innerHTML = '<p>No schedule data available. Generate a schedule first.</p>';
-        return;
-    }
-    
     const hours = employees.map(emp => employeeHours[emp]);
     
     const data = [{
@@ -322,11 +282,6 @@ function displayHoursChart() {
 }
 
 async function generateNewSchedule() {
-    if (!currentWeekStart) {
-        showAlert('Please select a week first.', 'danger');
-        return;
-    }
-    
     if (!confirm('This will generate a new schedule for the selected week. Continue?')) {
         return;
     }
@@ -348,7 +303,6 @@ async function generateNewSchedule() {
         }
     } catch (error) {
         console.error('Schedule generation failed:', error);
-        showAlert('Error generating schedule: ' + error.message, 'danger');
     }
 }
 
@@ -362,21 +316,16 @@ function exportSchedule() {
     const headers = ['Date', 'Employee', 'Shift Type', 'Role', 'Start Time', 'End Time', 'Hours', 'Overtime'];
     const csvContent = [
         headers.join(','),
-        ...currentSchedule.map(shift => {
-            const hours = calculateShiftHours(shift.shift_start, shift.shift_end);
-            const shiftTypeDisplay = shift.shift_type === 'DAY' ? 'Day' : 'Night';
-            
-            return [
-                shift.schedule_date,
-                `"${shift.employee_name}"`,
-                shiftTypeDisplay,
-                `"${shift.role}"`,
-                shift.shift_start,
-                shift.shift_end,
-                hours,
-                shift.is_overtime ? 'Yes' : 'No'
-            ].join(',');
-        })
+        ...currentSchedule.map(shift => [
+            shift.date,
+            `"${shift.employee_name}"`,
+            shift.shift_type,
+            `"${shift.role}"`,
+            shift.start_time,
+            shift.end_time,
+            shift.hours,
+            shift.is_overtime ? 'Yes' : 'No'
+        ].join(','))
     ].join('\n');
     
     // Download the file

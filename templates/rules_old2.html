@@ -1,0 +1,553 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h1 class="card-title">Scheduling Rules Configuration</h1>
+        <button class="btn btn-primary" onclick="saveRules()">
+            <i class="fas fa-save"></i>
+            Save Changes
+        </button>
+    </div>
+    
+    <form id="rules-form">
+        <div class="grid grid-2">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Coverage Requirements</h3>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Minimum Day Shift Staff (Weekdays)</label>
+                    <input type="number" class="form-control" id="min-day-weekday" min="1" max="10">
+                    <small class="form-text text-muted">Minimum staff required for day shifts on weekdays</small>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Minimum Day Shift Staff (Weekends)</label>
+                    <input type="number" class="form-control" id="min-day-weekend" min="1" max="10">
+                    <small class="form-text text-muted">Minimum staff required for day shifts on weekends</small>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Minimum Night Shift Staff</label>
+                    <input type="number" class="form-control" id="min-night" min="1" max="10">
+                    <small class="form-text text-muted">Minimum staff required for night shifts every day</small>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Employee Constraints</h3>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Default Max Hours Per Week</label>
+                    <input type="number" class="form-control" id="default-max-hours" min="20" max="80">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Maximum Consecutive Work Days</label>
+                    <input type="number" class="form-control" id="max-consecutive-days" min="1" max="7">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Minimum Rest Hours Between Shifts</label>
+                    <input type="number" class="form-control" id="min-rest-hours" min="4" max="24">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Overtime Threshold (Hours/Week)</label>
+                    <input type="number" class="form-control" id="overtime-threshold" min="20" max="60">
+                </div>
+            </div>
+        </div>
+        
+        <div class="grid grid-2">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Special Roles & Schedules</h3>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Lead/Supervisor Role</label>
+                    <input type="text" class="form-control" id="lead-role" value="LEAD" readonly>
+                    <small class="form-text text-muted">Fixed role identifier for lead staff</small>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Lead Weekly Hours Target</label>
+                    <input type="number" class="form-control" id="lead-hours" min="20" max="80">
+                    <small class="form-text text-muted">Target hours per week for lead staff</small>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">New Hire Training Hours</label>
+                    <input type="number" class="form-control" id="newhire-hours" min="20" max="60">
+                    <small class="form-text text-muted">Reduced hours for new hire training period</small>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Time Off & Trade Rules</h3>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Minimum Notice for Time Off (Days)</label>
+                    <input type="number" class="form-control" id="min-notice-days" min="1" max="90">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Maximum Time Off per Employee (Days/Month)</label>
+                    <input type="number" class="form-control" id="max-timeoff-monthly" min="1" max="31">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Allow Shift Trades</label>
+                    <select class="form-control" id="allow-trades">
+                        <option value="true">Yes</option>
+                        <option value="false">No</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Shift Definitions</h3>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Day Shift Start Time</label>
+                <input type="time" class="form-control" id="day-shift-start" value="07:00">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Day Shift End Time</label>
+                <input type="time" class="form-control" id="day-shift-end" value="19:00">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Night Shift Start Time</label>
+                <input type="time" class="form-control" id="night-shift-start" value="19:00">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Night Shift End Time</label>
+                <input type="time" class="form-control" id="night-shift-end" value="07:00">
+            </div>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">System Status & Validation</h2>
+    </div>
+    <div class="grid grid-3">
+        <button class="btn btn-primary" onclick="testRules()">
+            <i class="fas fa-vial"></i>
+            Test Current Schedule
+        </button>
+        <button class="btn btn-success" onclick="validateSystem()">
+            <i class="fas fa-check-circle"></i>
+            Validate System
+        </button>
+        <button class="btn btn-info" onclick="generateReport()">
+            <i class="fas fa-file-alt"></i>
+            Generate System Report
+        </button>
+    </div>
+    <div id="validation-results" style="margin-top: 1rem;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentRules = {};
+
+// Initialize page
+document.addEventListener('DOMContentLoaded', function() {
+    loadCurrentRules();
+});
+
+async function loadCurrentRules() {
+    try {
+        // Try to load current system status and rules
+        const [employeesResponse, scheduleResponse, timeoffResponse] = await Promise.all([
+            apiRequest('/api/employees'),
+            apiRequest('/api/schedule?start_date=2025-09-29&end_date=2025-10-05'), // Current week
+            apiRequest('/api/timeoff')
+        ]);
+
+        // Set default rules based on current system state
+        currentRules = {
+            min_day_weekday: 5,
+            min_day_weekend: 4,
+            min_night: 3,
+            default_max_hours: 40,
+            max_consecutive_days: 5,
+            min_rest_hours: 10,
+            overtime_threshold: 40,
+            lead_role: 'LEAD',
+            lead_hours: 60,
+            newhire_hours: 32,
+            min_notice_days: 14,
+            max_timeoff_monthly: 10,
+            allow_trades: true,
+            day_shift_start: '07:00',
+            day_shift_end: '19:00',
+            night_shift_start: '19:00',
+            night_shift_end: '07:00'
+        };
+
+        // Populate form with current rules
+        setFormValues(currentRules);
+        
+        // Show system summary
+        showSystemSummary(employeesResponse, scheduleResponse, timeoffResponse);
+        
+    } catch (error) {
+        console.error('Failed to load system data:', error);
+        showAlert('Error loading system data', 'danger');
+    }
+}
+
+function setFormValues(rules) {
+    // Set all form values from rules object
+    for (const [key, value] of Object.entries(rules)) {
+        const input = document.getElementById(key.replace(/_/g, '-'));
+        if (input) {
+            if (input.type === 'checkbox') {
+                input.checked = value;
+            } else {
+                input.value = value;
+            }
+        }
+    }
+}
+
+function getFormValues() {
+    const formData = new FormData(document.getElementById('rules-form'));
+    const rules = {};
+    
+    for (const [key, value] of formData.entries()) {
+        rules[key.replace(/-/g, '_')] = value;
+    }
+    
+    // Get checkbox values
+    rules.allow_trades = document.getElementById('allow-trades').value === 'true';
+    
+    return rules;
+}
+
+function showSystemSummary(employeesResponse, scheduleResponse, timeoffResponse) {
+    const resultsDiv = document.getElementById('validation-results');
+    
+    if (employeesResponse.success && scheduleResponse.success && timeoffResponse.success) {
+        const employeeCount = employeesResponse.count;
+        const scheduleCount = scheduleResponse.schedules ? scheduleResponse.schedules.length : 0;
+        const timeoffCount = timeoffResponse.requests ? timeoffResponse.requests.length : 0;
+        const pendingTimeoff = timeoffResponse.requests ? timeoffResponse.requests.filter(req => req.status === 'PENDING').length : 0;
+        
+        resultsDiv.innerHTML = `
+            <div class="alert alert-success">
+                <strong>System Status: Operational</strong>
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-top: 1rem;">
+                    <div>
+                        <strong>${employeeCount}</strong>
+                        <div>Active Employees</div>
+                    </div>
+                    <div>
+                        <strong>${scheduleCount}</strong>
+                        <div>Scheduled Shifts</div>
+                    </div>
+                    <div>
+                        <strong>${timeoffCount}</strong>
+                        <div>Time Off Requests</div>
+                    </div>
+                    <div>
+                        <strong>${pendingTimeoff}</strong>
+                        <div>Pending Approvals</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    } else {
+        resultsDiv.innerHTML = '<div class="alert alert-warning">Unable to load complete system status</div>';
+    }
+}
+
+async function saveRules() {
+    try {
+        const rules = getFormValues();
+        console.log('Saving rules:', rules);
+        
+        // In a real implementation, this would save to the backend
+        // For now, we'll update the currentRules and show success
+        currentRules = rules;
+        
+        showAlert('Rules configuration updated successfully! (Note: Backend integration pending)');
+    } catch (error) {
+        console.error('Failed to save rules:', error);
+        showAlert('Failed to save rules configuration.', 'danger');
+    }
+}
+
+async function testRules() {
+    const resultsDiv = document.getElementById('validation-results');
+    resultsDiv.innerHTML = '<div class="alert alert-info">Testing current schedule against rules...</div>';
+    
+    try {
+        // Load current schedule and test against rules
+        const scheduleResponse = await apiRequest('/api/schedule?start_date=2025-09-29&end_date=2025-10-05');
+        
+        if (!scheduleResponse.success) {
+            throw new Error('Failed to load schedule');
+        }
+        
+        const schedules = scheduleResponse.schedules || [];
+        const issues = [];
+        const warnings = [];
+        
+        // Test coverage rules
+        const coverageByDate = {};
+        schedules.forEach(shift => {
+            const date = shift.schedule_date;
+            if (!coverageByDate[date]) {
+                coverageByDate[date] = { day: 0, night: 0 };
+            }
+            coverageByDate[date][shift.shift_type.toLowerCase()]++;
+        });
+        
+        // Check for coverage issues
+        Object.entries(coverageByDate).forEach(([date, coverage]) => {
+            const dateObj = new Date(date);
+            const isWeekend = dateObj.getDay() === 0 || dateObj.getDay() === 6;
+            const minDayRequired = isWeekend ? currentRules.min_day_weekend : currentRules.min_day_weekday;
+            
+            if (coverage.day < minDayRequired) {
+                issues.push(`Insufficient day shift coverage on ${date}: ${coverage.day} staff (minimum ${minDayRequired})`);
+            }
+            if (coverage.night < currentRules.min_night) {
+                issues.push(`Insufficient night shift coverage on ${date}: ${coverage.night} staff (minimum ${currentRules.min_night})`);
+            }
+        });
+        
+        // Check for overtime issues
+        const employeeHours = {};
+        schedules.forEach(shift => {
+            if (!employeeHours[shift.employee_name]) {
+                employeeHours[shift.employee_name] = 0;
+            }
+            // Calculate hours from shift times
+            const start = new Date(`1970-01-01T${shift.shift_start}`);
+            const end = new Date(`1970-01-01T${shift.shift_end}`);
+            let hours = (end - start) / (1000 * 60 * 60);
+            if (hours < 0) hours += 24;
+            employeeHours[shift.employee_name] += hours;
+        });
+        
+        Object.entries(employeeHours).forEach(([employee, hours]) => {
+            if (hours > currentRules.overtime_threshold) {
+                warnings.push(`${employee} has ${hours.toFixed(1)} hours this week (overtime threshold: ${currentRules.overtime_threshold})`);
+            }
+        });
+        
+        // Display results
+        let resultsHtml = '';
+        
+        if (issues.length === 0 && warnings.length === 0) {
+            resultsHtml = '<div class="alert alert-success"><strong>All tests passed!</strong> Current schedule complies with all rules.</div>';
+        } else {
+            if (issues.length > 0) {
+                resultsHtml += `
+                    <div class="alert alert-danger">
+                        <strong>Critical Issues Found (${issues.length})</strong>
+                        <ul style="margin-top: 0.5rem;">
+                            ${issues.map(issue => `<li>${issue}</li>`).join('')}
+                        </ul>
+                    </div>
+                `;
+            }
+            
+            if (warnings.length > 0) {
+                resultsHtml += `
+                    <div class="alert alert-warning">
+                        <strong>Warnings (${warnings.length})</strong>
+                        <ul style="margin-top: 0.5rem;">
+                            ${warnings.map(warning => `<li>${warning}</li>`).join('')}
+                        </ul>
+                    </div>
+                `;
+            }
+        }
+        
+        resultsDiv.innerHTML = resultsHtml;
+        
+    } catch (error) {
+        console.error('Rule testing failed:', error);
+        resultsDiv.innerHTML = '<div class="alert alert-danger">Rule testing failed. Please try again.</div>';
+    }
+}
+
+async function validateSystem() {
+    const resultsDiv = document.getElementById('validation-results');
+    resultsDiv.innerHTML = '<div class="alert alert-info">Validating system configuration...</div>';
+    
+    try {
+        // Test all API endpoints
+        const endpoints = [
+            '/api/employees',
+            '/api/schedule',
+            '/api/timeoff'
+        ];
+        
+        const results = await Promise.allSettled(
+            endpoints.map(endpoint => apiRequest(endpoint))
+        );
+        
+        const validationResults = results.map((result, index) => {
+            const endpoint = endpoints[index];
+            if (result.status === 'fulfilled' && result.value.success) {
+                return { endpoint, status: 'success', message: 'OK' };
+            } else {
+                return { 
+                    endpoint, 
+                    status: 'error', 
+                    message: result.status === 'rejected' ? 'Network error' : 'API error'
+                };
+            }
+        });
+        
+        const successCount = validationResults.filter(r => r.status === 'success').length;
+        const totalCount = validationResults.length;
+        
+        const resultsHtml = validationResults.map(result => {
+            const icon = result.status === 'success' ? 'fa-check-circle text-success' : 'fa-times-circle text-danger';
+            return `
+                <div style="display: flex; align-items: center; padding: 0.5rem; border-bottom: 1px solid #e2e8f0;">
+                    <i class="fas ${icon}" style="margin-right: 1rem;"></i>
+                    <div>
+                        <strong>${result.endpoint}</strong>
+                        <div style="color: #718096; font-size: 0.875rem;">${result.message}</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        
+        resultsDiv.innerHTML = `
+            <div class="alert ${successCount === totalCount ? 'alert-success' : 'alert-warning'}">
+                <strong>System Validation Complete</strong>
+                ${successCount} of ${totalCount} endpoints operational
+            </div>
+            <div style="background: #f7fafc; border-radius: 8px; padding: 1rem; margin-top: 1rem;">
+                ${resultsHtml}
+            </div>
+        `;
+        
+    } catch (error) {
+        console.error('System validation failed:', error);
+        resultsDiv.innerHTML = '<div class="alert alert-danger">System validation failed. Please try again.</div>';
+    }
+}
+
+async function generateReport() {
+    const resultsDiv = document.getElementById('validation-results');
+    resultsDiv.innerHTML = '<div class="alert alert-info">Generating system report...</div>';
+    
+    try {
+        // Load all system data
+        const [employeesResponse, scheduleResponse, timeoffResponse] = await Promise.all([
+            apiRequest('/api/employees'),
+            apiRequest('/api/schedule?start_date=2025-09-29&end_date=2025-10-05'),
+            apiRequest('/api/timeoff')
+        ]);
+        
+        if (!employeesResponse.success || !scheduleResponse.success || !timeoffResponse.success) {
+            throw new Error('Failed to load system data');
+        }
+        
+        const employees = employeesResponse.employees || [];
+        const schedules = scheduleResponse.schedules || [];
+        const timeoffRequests = timeoffResponse.requests || [];
+        
+        // Generate report data
+        const reportData = {
+            generatedAt: new Date().toLocaleString(),
+            totalEmployees: employees.length,
+            activeSchedules: schedules.length,
+            timeoffRequests: timeoffRequests.length,
+            pendingTimeoff: timeoffRequests.filter(req => req.status === 'PENDING').length,
+            approvedTimeoff: timeoffRequests.filter(req => req.status === 'APPROVED').length,
+            leadEmployees: employees.filter(emp => emp.is_lead).length,
+            nightOnlyEmployees: employees.filter(emp => emp.nights_only).length,
+            scheduleCoverage: calculateCoverage(schedules),
+            employeeHours: calculateEmployeeHours(schedules)
+        };
+        
+        const reportHtml = `
+            <div class="alert alert-success">
+                <strong>System Report Generated</strong>
+            </div>
+            
+            <div style="background: #f7fafc; border-radius: 8px; padding: 1.5rem; margin-top: 1rem;">
+                <h4 style="margin-bottom: 1rem;">System Overview</h4>
+                
+                <div class="grid grid-3" style="margin-bottom: 1rem;">
+                    <div>
+                        <strong>Total Employees:</strong> ${reportData.totalEmployees}
+                    </div>
+                    <div>
+                        <strong>Active Schedules:</strong> ${reportData.activeSchedules}
+                    </div>
+                    <div>
+                        <strong>Time Off Requests:</strong> ${reportData.timeoffRequests}
+                    </div>
+                </div>
+                
+                <div class="grid grid-3" style="margin-bottom: 1rem;">
+                    <div>
+                        <strong>Lead Employees:</strong> ${reportData.leadEmployees}
+                    </div>
+                    <div>
+                        <strong>Night-Only Staff:</strong> ${reportData.nightOnlyEmployees}
+                    </div>
+                    <div>
+                        <strong>Pending Approvals:</strong> ${reportData.pendingTimeoff}
+                    </div>
+                </div>
+                
+                <h5 style="margin: 1rem 0 0.5rem 0;">Coverage Summary</h5>
+                <div style="font-size: 0.875rem;">
+                    ${Object.entries(reportData.scheduleCoverage).map(([date, coverage]) => 
+                        `${date}: ${coverage.day} day, ${coverage.night} night shifts`
+                    ).join('<br>')}
+                </div>
+                
+                <div style="margin-top: 1rem; font-size: 0.875rem; color: #718096;">
+                    Report generated on: ${reportData.generatedAt}
+                </div>
+            </div>
+        `;
+        
+        resultsDiv.innerHTML = reportHtml;
+        
+    } catch (error) {
+        console.error('Report generation failed:', error);
+        resultsDiv.innerHTML = '<div class="alert alert-danger">Report generation failed. Please try again.</div>';
+    }
+}
+
+function calculateCoverage(schedules) {
+    const coverage = {};
+    schedules.forEach(shift => {
+        const date = shift.schedule_date;
+        if (!coverage[date]) {
+            coverage[date] = { day: 0, night: 0 };
+        }
+        coverage[date][shift.shift_type.toLowerCase()]++;
+    });
+    return coverage;
+}
+
+function calculateEmployeeHours(schedules) {
+    const hours = {};
+    schedules.forEach(shift => {
+        if (!hours[shift.employee_name]) {
+            hours[shift.employee_name] = 0;
+        }
+        const start = new Date(`1970-01-01T${shift.shift_start}`);
+        const end = new Date(`1970-01-01T${shift.shift_end}`);
+        let shiftHours = (end - start) / (1000 * 60 * 60);
+        if (shiftHours < 0) shiftHours += 24;
+        hours[shift.employee_name] += shiftHours;
+    });
+    return hours;
+}
+</script>
+{% endblock %}
