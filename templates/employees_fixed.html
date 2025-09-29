@@ -1,0 +1,359 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h1 class="card-title">Employee Management</h1>
+        <button class="btn btn-primary" onclick="showAddEmployeeModal()">
+            <i class="fas fa-plus"></i>
+            Add New Employee
+        </button>
+    </div>
+    
+    <div class="table-responsive">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Shift Type</th>
+                    <th>Hours/Week</th>
+                    <th>Special Schedule</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="employees-table">
+                <!-- Employees will be loaded here -->
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Add Employee Modal -->
+<div id="add-employee-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
+    <div style="background: white; margin: 5% auto; padding: 2rem; border-radius: 16px; max-width: 600px; max-height: 80vh; overflow-y: auto;">
+        <h3>Add New Employee</h3>
+        <form id="add-employee-form">
+            <div class="form-group">
+                <label class="form-label">Full Name *</label>
+                <input type="text" class="form-control" id="employee-name" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Email Address *</label>
+                <input type="email" class="form-control" id="employee-email" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Shift Preference *</label>
+                <select class="form-control" id="employee-shift-type" required>
+                    <option value="">Select shift type</option>
+                    <option value="DAY">Day Only</option>
+                    <option value="NIGHT">Night Only</option>
+                    <option value="BOTH" selected>Both Day & Night</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Target Hours per Week *</label>
+                <input type="number" class="form-control" id="employee-hours" value="40" min="1" max="80" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Special Schedule</label>
+                <select class="form-control" id="employee-special-schedule">
+                    <option value="">No special schedule</option>
+                    <option value="LEAD">Lead/Supervisor</option>
+                    <option value="LEGAL_CAP">Legal Hour Limitation</option>
+                    <option value="NEW_HIRE">New Hire Training</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Maximum Consecutive Work Days</label>
+                <input type="number" class="form-control" id="employee-max-days" value="5" min="1" max="7">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Minimum Rest Hours Between Shifts</label>
+                <input type="number" class="form-control" id="employee-rest-hours" value="10" min="8" max="24">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Cannot Work Days (check all that apply)</label>
+                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; margin-top: 0.5rem;">
+                    <label><input type="checkbox" value="Mon" class="cannot-work-day"> Monday</label>
+                    <label><input type="checkbox" value="Tue" class="cannot-work-day"> Tuesday</label>
+                    <label><input type="checkbox" value="Wed" class="cannot-work-day"> Wednesday</label>
+                    <label><input type="checkbox" value="Thu" class="cannot-work-day"> Thursday</label>
+                    <label><input type="checkbox" value="Fri" class="cannot-work-day"> Friday</label>
+                    <label><input type="checkbox" value="Sat" class="cannot-work-day"> Saturday</label>
+                    <label><input type="checkbox" value="Sun" class="cannot-work-day"> Sunday</label>
+                </div>
+            </div>
+            <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 2rem;">
+                <button type="button" class="btn" onclick="closeAddEmployeeModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Add Employee</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Edit Employee Modal -->
+<div id="edit-employee-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
+    <div style="background: white; margin: 5% auto; padding: 2rem; border-radius: 16px; max-width: 600px; max-height: 80vh; overflow-y: auto;">
+        <h3>Edit Employee</h3>
+        <form id="edit-employee-form">
+            <input type="hidden" id="edit-employee-id">
+            <div class="form-group">
+                <label class="form-label">Full Name *</label>
+                <input type="text" class="form-control" id="edit-employee-name" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Email Address *</label>
+                <input type="email" class="form-control" id="edit-employee-email" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Shift Preference *</label>
+                <select class="form-control" id="edit-employee-shift-type" required>
+                    <option value="DAY">Day Only</option>
+                    <option value="NIGHT">Night Only</option>
+                    <option value="BOTH">Both Day & Night</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Target Hours per Week *</label>
+                <input type="number" class="form-control" id="edit-employee-hours" min="1" max="80" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Special Schedule</label>
+                <select class="form-control" id="edit-employee-special-schedule">
+                    <option value="">No special schedule</option>
+                    <option value="LEAD">Lead/Supervisor</option>
+                    <option value="LEGAL_CAP">Legal Hour Limitation</option>
+                    <option value="NEW_HIRE">New Hire Training</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Status</label>
+                <select class="form-control" id="edit-employee-status">
+                    <option value="1">Active</option>
+                    <option value="0">Inactive</option>
+                </select>
+            </div>
+            <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 2rem;">
+                <button type="button" class="btn" onclick="closeEditEmployeeModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let employees = [];
+let currentEditEmployeeId = null;
+
+// Initialize page
+document.addEventListener('DOMContentLoaded', function() {
+    loadEmployees();
+});
+
+async function loadEmployees() {
+    try {
+        console.log('Loading employees...');
+        const response = await apiRequest('/api/employees');
+        
+        if (response.success) {
+            employees = response.employees;
+            displayEmployees();
+        } else {
+            console.error('Failed to load employees:', response.error);
+            showAlert('Failed to load employees.', 'danger');
+        }
+    } catch (error) {
+        console.error('Error loading employees:', error);
+        showAlert('Error loading employees.', 'danger');
+    }
+}
+
+function displayEmployees() {
+    const tbody = document.getElementById('employees-table');
+    
+    if (employees.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 2rem;">No employees found.</td></tr>';
+        return;
+    }
+    
+    const html = employees.map(emp => `
+        <tr>
+            <td>${emp.name}</td>
+            <td>${emp.email}</td>
+            <td>
+                <span class="status-badge ${emp.shift_preference.toLowerCase()}">
+                    ${emp.shift_preference}
+                </span>
+            </td>
+            <td>${emp.max_hours_per_week}</td>
+            <td>${emp.special_schedule || 'None'}</td>
+            <td>
+                <span class="status-badge ${emp.active ? 'status-approved' : 'status-denied'}">
+                    ${emp.active ? 'Active' : 'Inactive'}
+                </span>
+            </td>
+            <td>
+                <button class="btn btn-primary" onclick="editEmployee(${emp.id})" style="padding: 0.5rem 1rem; margin-right: 0.5rem;">
+                    <i class="fas fa-edit"></i>
+                </button>
+                <button class="btn btn-danger" onclick="removeEmployee(${emp.id})" style="padding: 0.5rem 1rem;">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </td>
+        </tr>
+    `).join('');
+    
+    tbody.innerHTML = html;
+}
+
+function showAddEmployeeModal() {
+    document.getElementById('add-employee-modal').style.display = 'block';
+}
+
+function closeAddEmployeeModal() {
+    document.getElementById('add-employee-modal').style.display = 'none';
+    document.getElementById('add-employee-form').reset();
+}
+
+function closeEditEmployeeModal() {
+    document.getElementById('edit-employee-modal').style.display = 'none';
+    document.getElementById('edit-employee-form').reset();
+    currentEditEmployeeId = null;
+}
+
+function editEmployee(employeeId) {
+    const employee = employees.find(emp => emp.id === employeeId);
+    if (!employee) return;
+    
+    currentEditEmployeeId = employeeId;
+    
+    document.getElementById('edit-employee-id').value = employee.id;
+    document.getElementById('edit-employee-name').value = employee.name;
+    document.getElementById('edit-employee-email').value = employee.email;
+    document.getElementById('edit-employee-shift-type').value = employee.shift_preference;
+    document.getElementById('edit-employee-hours').value = employee.max_hours_per_week;
+    document.getElementById('edit-employee-special-schedule').value = employee.special_schedule || '';
+    document.getElementById('edit-employee-status').value = employee.active ? '1' : '0';
+    
+    document.getElementById('edit-employee-modal').style.display = 'block';
+}
+
+async function removeEmployee(employeeId) {
+    if (!confirm('Are you sure you want to remove this employee? This action cannot be undone.')) {
+        return;
+    }
+    
+    try {
+        const response = await apiRequest(`/api/employees/${employeeId}`, {
+            method: 'DELETE'
+        });
+        
+        if (response.success) {
+            showAlert('Employee removed successfully!');
+            loadEmployees(); // Refresh the list
+        } else {
+            showAlert('Failed to remove employee: ' + (response.error || 'Unknown error'), 'danger');
+        }
+    } catch (error) {
+        console.error('Error removing employee:', error);
+        showAlert('Error removing employee.', 'danger');
+    }
+}
+
+// Handle add employee form submission
+document.getElementById('add-employee-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const cannotWorkDays = Array.from(document.querySelectorAll('.cannot-work-day:checked'))
+        .map(cb => cb.value);
+    
+    const employeeData = {
+        name: document.getElementById('employee-name').value,
+        email: document.getElementById('employee-email').value,
+        shift_type: document.getElementById('employee-shift-type').value,
+        hours_per_week: parseInt(document.getElementById('employee-hours').value),
+        special_schedule: document.getElementById('employee-special-schedule').value || null,
+        max_consecutive_days: parseInt(document.getElementById('employee-max-days').value),
+        min_rest_hours: parseInt(document.getElementById('employee-rest-hours').value),
+        cannot_work_days: cannotWorkDays
+    };
+    
+    console.log('Creating employee with data:', employeeData);
+    
+    try {
+        const response = await apiRequest('/api/employees', {
+            method: 'POST',
+            body: JSON.stringify(employeeData)
+        });
+        
+        console.log('Employee creation response:', response);
+        
+        if (response.success) {
+            showAlert('Employee added successfully!');
+            closeAddEmployeeModal();
+            loadEmployees(); // Refresh the list
+        } else {
+            showAlert('Failed to add employee: ' + (response.error || 'Unknown error'), 'danger');
+        }
+    } catch (error) {
+        console.error('Error creating employee:', error);
+        showAlert('Error creating employee.', 'danger');
+    }
+});
+
+// Handle edit employee form submission
+document.getElementById('edit-employee-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    if (!currentEditEmployeeId) return;
+    
+    const employeeData = {
+        name: document.getElementById('edit-employee-name').value,
+        email: document.getElementById('edit-employee-email').value,
+        shift_type: document.getElementById('edit-employee-shift-type').value,
+        hours_per_week: parseInt(document.getElementById('edit-employee-hours').value),
+        special_schedule: document.getElementById('edit-employee-special-schedule').value || null,
+        active: parseInt(document.getElementById('edit-employee-status').value)
+    };
+    
+    console.log('Updating employee with data:', employeeData);
+    
+    try {
+        const response = await apiRequest(`/api/employees/${currentEditEmployeeId}`, {
+            method: 'PUT',
+            body: JSON.stringify(employeeData)
+        });
+        
+        console.log('Employee update response:', response);
+        
+        if (response.success) {
+            showAlert('Employee updated successfully!');
+            closeEditEmployeeModal();
+            loadEmployees(); // Refresh the list
+        } else {
+            showAlert('Failed to update employee: ' + (response.error || 'Unknown error'), 'danger');
+        }
+    } catch (error) {
+        console.error('Error updating employee:', error);
+        showAlert('Error updating employee.', 'danger');
+    }
+});
+
+// Close modals when clicking outside
+window.onclick = function(event) {
+    const addModal = document.getElementById('add-employee-modal');
+    const editModal = document.getElementById('edit-employee-modal');
+    
+    if (event.target === addModal) {
+        closeAddEmployeeModal();
+    }
+    if (event.target === editModal) {
+        closeEditEmployeeModal();
+    }
+}
+</script>
+{% endblock %}

@@ -281,10 +281,13 @@ class SchedulingEngine:
         """Assign shifts ensuring fair distribution and coverage"""
         assignments = []
         
+<<<<<<< HEAD
         pool = list(available_employees)
 
         pool.sort(key=lambda e: self._get_weekly_hours(e.id,date))
         
+=======
+>>>>>>> 5e34d53a235b0c22a5fa2c16b6d14481e289bfe6
         # Sort employees by weekly hours worked (ascending) for fair distribution
         available_employees.sort(key=lambda e: self._get_weekly_hours(e.id, date))
         
@@ -856,7 +859,11 @@ _db_init_done = False
 @app.before_request
 def _init_db_once():
     global _db_init_done
+<<<<<<< HEAD
     if _db_init_done or app.config.get("TESTING")
+=======
+    if _db_init_done or app.config.get("TESTING"):
+>>>>>>> 5e34d53a235b0c22a5fa2c16b6d14481e289bfe6
         return
     with app.app_context():
         db.create_all()
