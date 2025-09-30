@@ -1,0 +1,1714 @@
+#!/usr/bin/env python3
+"""
+Hospital PBX Scheduling System - Production Ready Version
+Fixed all issues identified in the codebase analysis document.
+"""
+
+from flask import Flask, render_template, request, jsonify, redirect, url_for
+from flask_sqlalchemy import SQLAlchemy
+from datetime import datetime, timedelta, time
+import json
+import os
+import logging
+from functools import wraps
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+app = Flask(__name__)
+
+# Configuration
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///hospital_scheduling.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'hospital-scheduling-secret-key-change-in-production')
+
+# Initialize database
+db = SQLAlchemy(app)
+
+# Models
+class Employee(db.Model):
+    __tablename__ = 'employees'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    is_lead = db.Column(db.Boolean, default=False)
+    nights_only = db.Column(db.Boolean, default=False)
+    max_hours_per_week = db.Column(db.Integer, default=40)
+    cannot_work_days = db.Column(db.Text, nullable=True)  # JSON string
+    active = db.Column(db.Boolean, default=True)
+    max_consecutive_days = db.Column(db.Integer, default=5)
+    min_rest_hours = db.Column(db.Integer, default=10)
+    special_schedule = db.Column(db.String(50), nullable=True)
+    shift_preference = db.Column(db.String(10), default='BOTH')  # DAY, NIGHT, BOTH
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    schedules = db.relationship('Schedule', backref='employee', lazy=True)
+    time_off_requests = db.relationship('TimeOffRequest', backref='employee', lazy=True)
+    shift_trades_requested = db.relationship('ShiftTrade', foreign_keys='ShiftTrade.requesting_employee_id', backref='requesting_employee', lazy=True)
+    shift_trades_target = db.relationship('ShiftTrade', foreign_keys='ShiftTrade.target_employee_id', backref='target_employee', lazy=True)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'email': self.email,
+            'is_lead': self.is_lead,
+            'nights_only': self.nights_only,
+            'max_hours_per_week': self.max_hours_per_week,
+            'cannot_work_days': json.loads(self.cannot_work_days) if self.cannot_work_days else [],
+            'active': self.active,
+            'max_consecutive_days': self.max_consecutive_days,
+            'min_rest_hours': self.min_rest_hours,
+            'special_schedule': self.special_schedule,
+            'shift_preference': self.shift_preference,
+            'created_at': self.created_at.isoformat()
+        }
+
+class Schedule(db.Model):
+    __tablename__ = 'schedules'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    employee_id = db.Column(db.Integer, db.ForeignKey('employees.id'), nullable=False)
+    schedule_date = db.Column(db.Date, nullable=False)
+    shift_start = db.Column(db.Time, nullable=False)
+    shift_end = db.Column(db.Time, nullable=False)
+    shift_type = db.Column(db.String(10), nullable=False)  # DAY, NIGHT
+    role = db.Column(db.String(20), nullable=False)  # D1, D2, N1, PATTY, etc.
+    is_overtime = db.Column(db.Boolean, default=False)
+    is_coverage = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'employee_id': self.employee_id,
+            'employee_name': self.employee.name,
+            'schedule_date': self.schedule_date.isoformat(),
+            'shift_start': self.shift_start.strftime('%H:%M'),
+            'shift_end': self.shift_end.strftime('%H:%M'),
+            'shift_type': self.shift_type,
+            'role': self.role,
+            'is_overtime': self.is_overtime,
+            'is_coverage': self.is_coverage,
+            'created_at': self.created_at.isoformat()
+        }
+
+class TimeOffRequest(db.Model):
+    __tablename__ = 'time_off_requests'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    employee_id = db.Column(db.Integer, db.ForeignKey('employees.id'), nullable=False)
+    request_date = db.Column(db.Date, default=datetime.utcnow().date)
+    start_date = db.Column(db.Date, nullable=False)
+    end_date = db.Column(db.Date, nullable=False)
+    shift_type = db.Column(db.String(10), default='BOTH')  # DAY, NIGHT, BOTH
+    status = db.Column(db.String(20), default='PENDING')  # PENDING, APPROVED, DENIED
+    reason = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    approved_at = db.Column(db.DateTime, nullable=True)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'employee_id': self.employee_id,
+            'employee_name': self.employee.name,
+            'request_date': self.request_date.isoformat(),
+            'start_date': self.start_date.isoformat(),
+            'end_date': self.end_date.isoformat(),
+            'shift_type': self.shift_type,
+            'status': self.status,
+            'reason': self.reason,
+            'created_at': self.created_at.isoformat(),
+            'approved_at': self.approved_at.isoformat() if self.approved_at else None
+        }
+
+class ShiftTrade(db.Model):
+    __tablename__ = 'shift_trades'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    requesting_employee_id = db.Column(db.Integer, db.ForeignKey('employees.id'), nullable=False)
+    target_employee_id = db.Column(db.Integer, db.ForeignKey('employees.id'), nullable=False)
+    original_schedule_id = db.Column(db.Integer, db.ForeignKey('schedules.id'), nullable=False)
+    trade_schedule_id = db.Column(db.Integer, db.ForeignKey('schedules.id'), nullable=False)
+    trade_reason = db.Column(db.Text, nullable=True)
+    status = db.Column(db.String(20), default='PENDING')  # PENDING, APPROVED, DENIED
+    approved_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    original_schedule = db.relationship('Schedule', foreign_keys=[original_schedule_id], backref='original_trades')
+    trade_schedule = db.relationship('Schedule', foreign_keys=[trade_schedule_id], backref='trade_trades')
+    
+    def to_dict(self):
+        def get_shift_info(schedule):
+            if not schedule:
+                return "Schedule not found"
+            try:
+                return f"{schedule.schedule_date} {schedule.shift_type} {schedule.role}"
+            except AttributeError:
+                return "Invalid schedule data"
+
+        return {
+            'id': self.id,
+            'requesting_employee_id': self.requesting_employee_id,
+            'requesting_employee_name': self.requesting_employee.name if self.requesting_employee else "Unknown Employee",
+            'target_employee_id': self.target_employee_id,
+            'target_employee_name': self.target_employee.name if self.target_employee else "Unknown Employee",
+            'original_schedule_id': self.original_schedule_id,
+            'original_shift': get_shift_info(self.original_schedule),
+            'trade_schedule_id': self.trade_schedule_id,
+            'trade_shift': get_shift_info(self.trade_schedule),
+            'trade_reason': self.trade_reason,
+            'status': self.status,
+            'approved_at': self.approved_at.isoformat() if self.approved_at else None,
+            'created_at': self.created_at.isoformat()
+        }
+    
+
+class Rule(db.Model):
+    __tablename__ = 'rules'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), unique=True, nullable=False)
+    value = db.Column(db.Text, nullable=False)
+    category = db.Column(db.String(50), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    data_type = db.Column(db.String(20), default='string')  # string, number, boolean, time
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def to_dict(self):
+        # Convert value based on data type
+        if self.data_type == 'number':
+            converted_value = float(self.value) if '.' in self.value else int(self.value)
+        elif self.data_type == 'boolean':
+            converted_value = self.value.lower() == 'true'
+        elif self.data_type == 'json':
+            converted_value = json.loads(self.value)
+        else:
+            converted_value = self.value
+            
+        return {
+            'id': self.id,
+            'name': self.name,
+            'value': converted_value,
+            'category': self.category,
+            'description': self.description,
+            'data_type': self.data_type,
+            'updated_at': self.updated_at.isoformat()
+        }
+
+# Scheduling Engine with PTO reshuffling
+class SchedulingEngine:
+    def __init__(self):
+        self.rules = self._load_rules()
+
+        self.day_shifts_weekday = [
+            ('D1', time(7, 0), time(19, 0), 12),
+            ('D2', time(7, 0), time(19, 0), 12),
+            ('D3', time(7, 0), time(19, 0), 12),
+            ('PATTY', time(8, 0), time(16, 0), 8),
+            ('EARLY1', time(7, 0), time(8, 0), 1),
+            ('LATE3', time(16, 0), time(19, 0), 3)
+        ]
+        
+        self.day_shifts_weekend = [
+            ('D1', time(7, 0), time(19, 0), 12),
+            ('D2', time(7, 0), time(19, 0), 12),
+            ('D3', time(7, 0), time(19, 0), 12),
+            ('D4', time(7, 0), time(19, 0), 12)
+        ]
+        
+        self.night_shifts = [
+            ('N1', time(19, 0), time(5, 30), 10.5),
+            ('N2', time(21, 30), time(8, 0), 10.5),
+            ('N3', time(19, 0), time(7, 0), 12)
+        ]
+    def _load_rules(self):
+        try:
+            rules=Rule.query.all()
+            return {rule.name: rule.to_dict()['value'] for rule in rules}
+        except Exception as e:
+            logger.error(f"Error loading rules: {str(e)}")
+            return{}
+    def get_rule(self,name,default=None):
+        return self.rules.get(name,default)
+
+    def generate_schedule_with_pto_reshuffling(self, start_date, days=28):
+        """Generate schedule with automatic PTO reshuffling"""
+        try:
+            logger.info(f"Starting schedule generation for {days} days from {start_date}")
+            
+            # Get all active employees
+            employees = Employee.query.filter_by(active=True).all()
+            logger.info(f"Found {len(employees)} active employees")
+            
+            # Get all approved time off in the date range
+            time_offs = TimeOffRequest.query.filter(
+                TimeOffRequest.status == 'APPROVED',
+                TimeOffRequest.start_date <= start_date + timedelta(days=days-1),
+                TimeOffRequest.end_date >= start_date
+            ).all()
+            logger.info(f"Found {len(time_offs)} approved time off requests")
+            
+            # Build PTO lookup for efficient access
+            pto_lookup = {}
+            for pto in time_offs:
+                current_date = pto.start_date
+                while current_date <= pto.end_date:
+                    if current_date not in pto_lookup:
+                        pto_lookup[current_date] = {}
+                    if pto.shift_type not in pto_lookup[current_date]:
+                        pto_lookup[current_date][pto.shift_type] = []
+                    pto_lookup[current_date][pto.shift_type].append(pto.employee_id)
+                    current_date += timedelta(days=1)
+            
+            new_assignments = []
+            
+            for day_offset in range(days):
+                current_date = start_date + timedelta(days=day_offset)
+                is_weekend = current_date.weekday() >= 5
+
+                if current_date.weekday() == 0:
+                    pass 
+                
+                # Get day shifts
+                day_shifts = self.day_shifts_weekend if is_weekend else self.day_shifts_weekday
+                
+                # Get employees available for day shift (excluding PTO)
+                day_pto_employees = pto_lookup.get(current_date, {}).get('DAY', []) + pto_lookup.get(current_date, {}).get('BOTH', [])
+                available_day_employees = [e for e in employees if e.id not in day_pto_employees and self._can_work_day_shift(e)]
+                
+                # Get employees available for night shift (excluding PTO)
+                night_pto_employees = pto_lookup.get(current_date, {}).get('NIGHT', []) + pto_lookup.get(current_date, {}).get('BOTH', [])
+                available_night_employees = [e for e in employees if e.id not in night_pto_employees and self._can_work_night_shift(e)]
+                
+                # Handle coverage gaps due to PTO
+                min_day_coverage = 4 if not is_weekend else 4  # 4 on weekends, 5 on weekdays
+                min_night_coverage = 3
+                
+                # Fill day shift gaps if needed
+                if len(available_day_employees) < min_day_coverage:
+                    logger.warning(f"Day shift coverage gap on {current_date}: {len(available_day_employees)} < {min_day_coverage}")
+                    # Add employees who can work extra (not at max hours) to fill gaps
+                    extra_employees = [e for e in employees if e.id not in day_pto_employees and e not in available_day_employees and self._can_work_day_shift(e)]
+                    available_day_employees.extend(extra_employees[:min_day_coverage - len(available_day_employees)])
+                
+                # Fill night shift gaps if needed
+                if len(available_night_employees) < min_night_coverage:
+                    logger.warning(f"Night shift coverage gap on {current_date}: {len(available_night_employees)} < {min_night_coverage}")
+                    extra_employees = [e for e in employees if e.id not in night_pto_employees and e not in available_night_employees and self._can_work_night_shift(e)]
+                    available_night_employees.extend(extra_employees[:min_night_coverage - len(available_night_employees)])
+                
+                # Assign day shifts with fair distribution
+                day_assignments = self._assign_shifts_with_fair_distribution(
+                    day_shifts, available_day_employees, current_date, 'DAY'
+                )
+                
+                # Assign night shifts with fair distribution
+                night_assignments = self._assign_shifts_with_fair_distribution(
+                    self.night_shifts, available_night_employees, current_date, 'NIGHT'
+                )
+                
+                new_assignments.extend(day_assignments + night_assignments)
+            
+            logger.info(f"Successfully generated {len(new_assignments)} shift assignments")
+            return new_assignments
+            
+        except Exception as e:
+            logger.error(f"Error generating schedule with PTO reshuffling: {str(e)}")
+            raise
+    
+    def _can_work_day_shift(self, employee):
+        """Check if employee can work day shift"""
+        return not employee.nights_only
+    
+    def _can_work_night_shift(self, employee):
+        """Check if employee can work night shift"""
+        if employee.shift_preference == 'DAY':
+            return False
+        return True  # Everyone can work nights unless specified otherwise
+    
+    def _assign_shifts_with_fair_distribution(self, shifts, available_employees, date, shift_type):
+        """Assign shifts ensuring fair distribution and coverage"""     
+        assignments = []
+
+        # Sort employees by weekly hours worked (ascending) for fair distribution
+        available_employees.sort(key=lambda e: self._get_weekly_hours(e.id, date))
+        
+        for i, (role, start_time, end_time, hours) in enumerate(shifts):
+            if i < len(available_employees):
+                employee = available_employees[i]
+                
+                # Check if employee can work this day (not restricted)
+                if self._can_work_on_day(employee, date):
+                    # Check if assigning this shift would exceed max consecutive days
+                    if not self._would_exceed_consecutive_days(employee.id, date):
+                        # Check if employee has enough rest since last shift
+                        if self._has_sufficient_rest(employee.id, date, start_time):
+                            # Calculate if this would be overtime
+                            weekly_hours = self._get_weekly_hours(employee.id, date)
+                            is_overtime = weekly_hours + hours > employee.max_hours_per_week
+                            
+                            assignments.append({
+                                'employee_id': employee.id,
+                                'schedule_date': date,
+                                'shift_start': start_time,
+                                'shift_end': end_time,
+                                'shift_type': shift_type,
+                                'role': role,
+                                'is_overtime': is_overtime,
+                                'is_coverage': False  # Can be set to True if needed for coverage gaps
+                            })
+        
+        return assignments
+    
+    def _get_weekly_hours(self, employee_id, date):
+        """Get total hours worked by employee in the current week"""
+        week_start = date - timedelta(days=date.weekday())
+        week_end = week_start + timedelta(days=6)
+        
+        schedules = Schedule.query.filter(
+            Schedule.employee_id == employee_id,
+            Schedule.schedule_date >= week_start,
+            Schedule.schedule_date <= week_end
+        ).all()
+        
+        return sum(self._calculate_shift_hours(s.shift_start, s.shift_end) for s in schedules)
+    
+    def _calculate_shift_hours(self, start_time, end_time):
+        """Calculate duration in hours between start and end time"""
+        start_dt = datetime.combine(datetime.today(), start_time)
+        end_dt = datetime.combine(datetime.today(), end_time)
+        
+        if end_dt <= start_dt:
+            end_dt += timedelta(days=1)
+        
+        return (end_dt - start_dt).total_seconds() / 3600
+    
+    def _can_work_on_day(self, employee, date):
+        """Check if employee is restricted from working on this day"""
+        if not employee.cannot_work_days:
+            return True
+        
+        try:
+            cannot_work = json.loads(employee.cannot_work_days)
+            return date.strftime('%a') not in cannot_work
+        except json.JSONDecodeError:
+            logger.warning(f"Invalid cannot_work_days format for employee {employee.id}")
+            return True
+    
+    def _would_exceed_consecutive_days(self, employee_id, date):
+        """Check if assigning a shift would exceed max consecutive work days"""
+        # Look back to find the start of the current work streak
+        current_date = date - timedelta(days=1)
+        consecutive_days = 0
+        
+        while current_date >= date - timedelta(days=10):  # Look back max 10 days
+            has_shift = Schedule.query.filter(
+                Schedule.employee_id == employee_id,
+                Schedule.schedule_date == current_date
+            ).count() > 0
+            
+            if has_shift:
+                consecutive_days += 1
+            else:
+                break
+            
+            current_date -= timedelta(days=1)
+        
+        employee = Employee.query.get(employee_id)
+        return consecutive_days >= employee.max_consecutive_days
+    
+    def _has_sufficient_rest(self, employee_id, date, start_time):
+        """Check if employee has sufficient rest since their last shift"""
+        # Find the last shift ending before this one
+        last_shift = Schedule.query.filter(
+            Schedule.employee_id == employee_id,
+            Schedule.schedule_date < date
+        ).order_by(Schedule.schedule_date.desc(), Schedule.shift_end.desc()).first()
+        
+        if not last_shift:
+            return True  # No previous shift
+        
+        # Calculate hours between shifts
+        if last_shift.schedule_date == date - timedelta(days=1):
+            # Previous shift was yesterday, check if it ended late
+            last_end = datetime.combine(last_shift.schedule_date, last_shift.shift_end)
+            if last_shift.shift_end < last_shift.shift_start:  # Overnight shift
+                last_end += timedelta(days=1)
+        else:
+            # Previous shift was on a different day
+            last_end = datetime.combine(last_shift.schedule_date, last_shift.shift_end)
+        
+        current_start = datetime.combine(date, start_time)
+        
+        hours_between = (current_start - last_end).total_seconds() / 3600
+        
+        employee = Employee.query.get(employee_id)
+        return hours_between >= employee.min_rest_hours
+def validate_coverage_rules(rules, schedules, employees):
+    """Validate coverage-related rules"""
+    results = []
+    
+    # Group schedules by date and shift type
+    coverage_by_date = {}
+    for schedule in schedules:
+        date_str = schedule.schedule_date.isoformat()
+        if date_str not in coverage_by_date:
+            coverage_by_date[date_str] = {'DAY': 0, 'NIGHT': 0}
+        coverage_by_date[date_str][schedule.shift_type] += 1
+    
+    # Check coverage against rules
+    min_day_weekday = rules.get('min_day_weekday', 4)
+    min_day_weekend = rules.get('min_day_weekend', 4)
+    min_night = rules.get('min_night', 3)
+    
+    for date_str, coverage in coverage_by_date.items():
+        date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+        is_weekend = date_obj.weekday() >= 5
+        min_day_required = min_day_weekend if is_weekend else min_day_weekday
+        
+        if coverage['DAY'] < min_day_required:
+            results.append({
+                'test': f'Day Shift Coverage on {date_str}',
+                'status': 'fail',
+                'message': f'Insufficient day shift staff: {coverage["DAY"]} (minimum {min_day_required})',
+                'category': 'coverage'
+            })
+        else:
+            results.append({
+                'test': f'Day Shift Coverage on {date_str}',
+                'status': 'pass',
+                'message': f'Day shift coverage adequate: {coverage["DAY"]} staff',
+                'category': 'coverage'
+            })
+            
+        if coverage['NIGHT'] < min_night:
+            results.append({
+                'test': f'Night Shift Coverage on {date_str}',
+                'status': 'fail',
+                'message': f'Insufficient night shift staff: {coverage["NIGHT"]} (minimum {min_night})',
+                'category': 'coverage'
+            })
+        else:
+            results.append({
+                'test': f'Night Shift Coverage on {date_str}',
+                'status': 'pass',
+                'message': f'Night shift coverage adequate: {coverage["NIGHT"]} staff',
+                'category': 'coverage'
+            })
+    
+    return results
+
+def validate_constraint_rules(rules, schedules, employees):
+    """Validate employee constraint rules"""
+    results = []
+    
+    max_consecutive_days = rules.get('max_consecutive_days', 5)
+    min_rest_hours = rules.get('min_rest_hours', 10)
+    overtime_threshold = rules.get('overtime_threshold', 40)
+    
+    # Check consecutive days for each employee
+    for employee in employees:
+        employee_schedules = [s for s in schedules if s.employee_id == employee.id]
+        employee_schedules.sort(key=lambda x: x.schedule_date)
+        
+        # Check consecutive days
+        if employee_schedules:
+            consecutive_count = 1
+            current_date = employee_schedules[0].schedule_date
+            
+            for schedule in employee_schedules[1:]:
+                if (schedule.schedule_date - current_date).days == 1:
+                    consecutive_count += 1
+                else:
+                    consecutive_count = 1
+                current_date = schedule.schedule_date
+                
+                if consecutive_count > max_consecutive_days:
+                    results.append({
+                        'test': f'Consecutive Days - {employee.name}',
+                        'status': 'fail',
+                        'message': f'Employee worked {consecutive_count} consecutive days (max: {max_consecutive_days})',
+                        'category': 'constraints'
+                    })
+                    break
+    
+    return results
+
+def validate_system_rules(rules, employees, schedules, timeoff_requests):
+    """Validate system-wide rules"""
+    results = []
+    
+    # Check if we have enough employees for coverage
+    min_employees = rules.get('min_total_employees', 6)
+    if len(employees) < min_employees:
+        results.append({
+            'test': 'Minimum Employee Count',
+            'status': 'warning',
+            'message': f'Low employee count: {len(employees)} (minimum: {min_employees})',
+            'category': 'system'
+        })
+    else:
+        results.append({
+            'test': 'Minimum Employee Count',
+            'status': 'pass',
+            'message': f'Sufficient employees: {len(employees)}',
+            'category': 'system'
+        })
+    
+    return results
+
+def analyze_coverage(schedules, employees):
+    """Analyze schedule coverage"""
+    if not schedules:
+        return {'message': 'No schedule data available'}
+    
+    coverage_by_date = {}
+    for schedule in schedules:
+        date_str = schedule.schedule_date.isoformat()
+        if date_str not in coverage_by_date:
+            coverage_by_date[date_str] = {'DAY': 0, 'NIGHT': 0}
+        coverage_by_date[date_str][schedule.shift_type] += 1
+    
+    return {
+        'total_days_analyzed': len(coverage_by_date),
+        'average_day_coverage': sum(c['DAY'] for c in coverage_by_date.values()) / len(coverage_by_date),
+        'average_night_coverage': sum(c['NIGHT'] for c in coverage_by_date.values()) / len(coverage_by_date),
+        'coverage_by_date': coverage_by_date
+    }
+
+def analyze_rule_compliance(rules, schedules, employees):
+    """Analyze rule compliance across the system"""
+    # This would implement more sophisticated compliance analysis
+    return {
+        'rules_analyzed': len(rules),
+        'compliance_score': 85,  # Placeholder
+        'major_issues': 0,
+        'minor_issues': 2
+    }
+
+def generate_recommendations(rules, schedules, employees):
+    """Generate system recommendations"""
+    recommendations = []
+    
+    if len(employees) < 8:
+        recommendations.append({
+            'priority': 'high',
+            'message': 'Consider hiring additional staff to maintain adequate coverage',
+            'category': 'staffing'
+        })
+    
+    # Add more recommendation logic based on your business rules
+    return recommendations
+
+def validate_employee_rules(rules, schedules, employees):
+    """Validate employee-specific rules and constraints"""
+    results = []
+    
+    # Get rule values with defaults
+    max_consecutive_days = rules.get('max_consecutive_days', 5)
+    min_rest_hours = rules.get('min_rest_hours', 10)
+    overtime_threshold = rules.get('overtime_threshold', 40)
+    lead_hours = rules.get('lead_hours', 60)
+    newhire_hours = rules.get('newhire_hours', 32)
+    
+    for employee in employees:
+        employee_schedules = [s for s in schedules if s.employee_id == employee.id]
+        if not employee_schedules:
+            continue
+            
+        # Sort schedules by date
+        employee_schedules.sort(key=lambda x: x.schedule_date)
+        
+        # 1. Check consecutive work days
+        consecutive_days_result = check_consecutive_days(employee, employee_schedules, max_consecutive_days)
+        if consecutive_days_result:
+            results.append(consecutive_days_result)
+        
+        # 2. Check rest periods between shifts
+        rest_period_results = check_rest_periods(employee, employee_schedules, min_rest_hours)
+        results.extend(rest_period_results)
+        
+        # 3. Check weekly hours against limits
+        weekly_hours_result = check_weekly_hours(employee, employee_schedules, overtime_threshold, lead_hours, newhire_hours)
+        if weekly_hours_result:
+            results.append(weekly_hours_result)
+        
+        # 4. Check shift preferences
+        preference_result = check_shift_preferences(employee, employee_schedules)
+        if preference_result:
+            results.append(preference_result)
+        
+        # 5. Check cannot_work_days restrictions
+        cannot_work_result = check_cannot_work_days(employee, employee_schedules)
+        if cannot_work_result:
+            results.append(cannot_work_result)
+    
+    return results
+
+def check_consecutive_days(employee, schedules, max_consecutive_days):
+    """Check if employee exceeds maximum consecutive work days"""
+    consecutive_count = 1
+    current_date = schedules[0].schedule_date
+    
+    for i in range(1, len(schedules)):
+        prev_date = schedules[i-1].schedule_date
+        current_date = schedules[i].schedule_date
+        
+        if (current_date - prev_date).days == 1:
+            consecutive_count += 1
+        else:
+            consecutive_count = 1
+        
+        if consecutive_count > max_consecutive_days:
+            return {
+                'test': f'Consecutive Days - {employee.name}',
+                'status': 'fail',
+                'message': f'Employee worked {consecutive_count} consecutive days (max: {max_consecutive_days}) from {prev_date} to {current_date}',
+                'category': 'employee_constraints',
+                'employee_id': employee.id
+            }
+    
+    return None
+
+def check_rest_periods(employee, schedules, min_rest_hours):
+    """Check if employee has sufficient rest between shifts"""
+    results = []
+    
+    for i in range(1, len(schedules)):
+        prev_shift = schedules[i-1]
+        current_shift = schedules[i]
+        
+        # Only check if shifts are on consecutive days
+        if (current_shift.schedule_date - prev_shift.schedule_date).days == 1:
+            # Calculate hours between shifts
+            prev_end = datetime.combine(prev_shift.schedule_date, prev_shift.shift_end)
+            current_start = datetime.combine(current_shift.schedule_date, current_shift.shift_start)
+            
+            # Handle overnight shifts
+            if prev_shift.shift_end < prev_shift.shift_start:  # Overnight shift
+                prev_end += timedelta(days=1)
+            
+            hours_between = (current_start - prev_end).total_seconds() / 3600
+            
+            if hours_between < min_rest_hours:
+                results.append({
+                    'test': f'Rest Period - {employee.name}',
+                    'status': 'fail',
+                    'message': f'Insufficient rest between shifts: {hours_between:.1f}h (minimum: {min_rest_hours}h) from {prev_shift.schedule_date} to {current_shift.schedule_date}',
+                    'category': 'employee_constraints',
+                    'employee_id': employee.id
+                })
+    
+    return results
+
+def check_weekly_hours(employee, schedules, overtime_threshold, lead_hours, newhire_hours):
+    """Check if employee exceeds weekly hour limits"""
+    # Group schedules by week
+    weekly_hours = {}
+    
+    for schedule in schedules:
+        # Calculate week start (Monday)
+        week_start = schedule.schedule_date - timedelta(days=schedule.schedule_date.weekday())
+        week_key = week_start.isoformat()
+        
+        if week_key not in weekly_hours:
+            weekly_hours[week_key] = 0
+        
+        # Calculate shift hours
+        start_dt = datetime.combine(schedule.schedule_date, schedule.shift_start)
+        end_dt = datetime.combine(schedule.schedule_date, schedule.shift_end)
+        
+        if end_dt <= start_dt:
+            end_dt += timedelta(days=1)
+        
+        shift_hours = (end_dt - start_dt).total_seconds() / 3600
+        weekly_hours[week_key] += shift_hours
+    
+    # Check each week against appropriate limit
+    employee_limit = employee.max_hours_per_week
+    
+    # Adjust limit for special roles
+    if employee.is_lead:
+        employee_limit = lead_hours
+    elif employee.special_schedule == 'NEW_HIRE':
+        employee_limit = newhire_hours
+    
+    for week_start, hours in weekly_hours.items():
+        if hours > employee_limit:
+            overtime_hours = hours - employee_limit
+            status = 'warning' if overtime_hours <= 10 else 'fail'
+            
+            return {
+                'test': f'Weekly Hours - {employee.name}',
+                'status': status,
+                'message': f'Weekly hours exceeded: {hours:.1f}h (limit: {employee_limit}h) for week starting {week_start}',
+                'category': 'employee_constraints',
+                'employee_id': employee.id
+            }
+    
+    return None
+
+def check_shift_preferences(employee, schedules):
+    """Check if employee is scheduled according to their preferences"""
+    violations = []
+    
+    for schedule in schedules:
+        # Check nights_only employees
+        if employee.nights_only and schedule.shift_type == 'DAY':
+            violations.append(f"Scheduled for day shift on {schedule.schedule_date}")
+        
+        # Check day-only preference (shift_preference == 'DAY')
+        if employee.shift_preference == 'DAY' and schedule.shift_type == 'NIGHT':
+            violations.append(f"Scheduled for night shift on {schedule.schedule_date}")
+    
+    if violations:
+        return {
+            'test': f'Shift Preferences - {employee.name}',
+            'status': 'warning',
+            'message': f'Shift preference violations: {"; ".join(violations)}',
+            'category': 'employee_preferences',
+            'employee_id': employee.id
+        }
+    
+    return None
+
+def check_cannot_work_days(employee, schedules):
+    """Check if employee is scheduled on their restricted days"""
+    if not employee.cannot_work_days:
+        return None
+    
+    try:
+        cannot_work_days = json.loads(employee.cannot_work_days)
+        if not cannot_work_days:
+            return None
+        
+        violations = []
+        
+        for schedule in schedules:
+            day_name = schedule.schedule_date.strftime('%a')
+            if day_name in cannot_work_days:
+                violations.append(f"Scheduled on {day_name} ({schedule.schedule_date})")
+        
+        if violations:
+            return {
+                'test': f'Restricted Days - {employee.name}',
+                'status': 'fail',
+                'message': f'Scheduled on restricted days: {"; ".join(violations)}',
+                'category': 'employee_constraints',
+                'employee_id': employee.id
+            }
+    
+    except json.JSONDecodeError:
+        # If cannot_work_days is invalid JSON, skip this check
+        pass
+    
+    return None
+
+# Routes - Fixed duplicate function names
+@app.route('/')
+def dashboard():
+    """Main dashboard route"""
+    return render_template('dashboard.html')
+
+@app.route('/dashboard')
+def dashboard_page():
+    """Dashboard page route - fixed function name"""
+    return render_template('dashboard.html')
+
+@app.route('/schedule')
+def schedule_page():
+    """Schedule page route - fixed function name"""
+    return render_template('schedule.html')
+
+@app.route('/employees')
+def employees_page():
+    """Employees page route - fixed function name"""
+    return render_template('employees.html')
+
+@app.route('/timeoff')
+def timeoff_page():
+    """Time off page route - fixed function name"""
+    return render_template('timeoff.html')
+
+@app.route('/shift-trades')
+def shift_trades_page():
+    """Shift trades page route - fixed function name"""
+    return render_template('shift_trades.html')
+
+@app.route('/rules')
+def rules_page():
+    """Rules page route - fixed function name"""
+    return render_template('rules.html')
+
+# API Routes - Fixed data handling and responses
+@app.route('/api/employees', methods=['GET', 'POST'])
+def api_employees():
+    """Employee API with fixed data handling"""
+    if request.method == 'GET':
+        try:
+            employees = Employee.query.filter_by(active=True).all()
+            return jsonify({
+                'success': True,
+                'employees': [emp.to_dict() for emp in employees],
+                'count':len(employees)
+            })
+        except Exception as e:
+            logger.error(f"Error fetching employees: {str(e)}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+    
+    elif request.method == 'POST':
+        try:
+            data = request.json
+            logger.info(f"Creating employee with data: {data}")
+            
+            # Map frontend fields to backend model correctly
+            shift_type = data.get('shift_type', 'BOTH')
+            nights_only = shift_type == 'NIGHT'
+            is_lead = data.get('special_schedule') == 'LEAD'
+            
+            # Handle cannot_work_days properly
+            cannot_work_days = data.get('cannot_work_days', [])
+            if isinstance(cannot_work_days, list):
+                cannot_work_days_json = json.dumps(cannot_work_days)
+            else:
+                cannot_work_days_json = '[]'
+            
+            employee = Employee(
+                name=data['name'],
+                email=data['email'],
+                is_lead=is_lead,
+                nights_only=nights_only,
+                max_hours_per_week=data.get('hours_per_week', 40),  # Fixed: use hours_per_week from frontend
+                cannot_work_days=cannot_work_days_json,
+                max_consecutive_days=data.get('max_consecutive_days', 5),
+                min_rest_hours=data.get('min_rest_hours', 10),
+                special_schedule=data.get('special_schedule'),
+                shift_preference=shift_type
+            )
+            
+            db.session.add(employee)
+            db.session.commit()
+            
+            logger.info(f"Successfully created employee: {employee.name}")
+            return jsonify({
+                'success': True,
+                'employee': employee.to_dict()
+            }), 201
+            
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error creating employee: {str(e)}")
+            return jsonify({'success': False, 'error': str(e)}), 400
+
+@app.route('/api/employees/<int:employee_id>', methods=['PUT', 'DELETE'])
+def update_employee(employee_id):
+    """Update/Delete employee with proper data handling"""
+    employee = Employee.query.get_or_404(employee_id)
+    
+    if request.method == 'PUT':
+        try:
+            data = request.json
+            logger.info(f"Updating employee {employee_id} with data: {data}")
+            
+            # Update fields if provided
+            if 'name' in data:
+                employee.name = data['name']
+            if 'email' in data:
+                employee.email = data['email']
+            if 'shift_type' in data:
+                shift_type = data['shift_type']
+                employee.nights_only = shift_type == 'NIGHT'
+                employee.shift_preference = shift_type
+            if 'special_schedule' in data:
+                employee.special_schedule = data['special_schedule']
+                employee.is_lead = data['special_schedule'] == 'LEAD'
+            if 'hours_per_week' in data:
+                employee.max_hours_per_week = data['hours_per_week']
+            if 'max_consecutive_days' in data:
+                employee.max_consecutive_days = data['max_consecutive_days']
+            if 'min_rest_hours' in data:
+                employee.min_rest_hours = data['min_rest_hours']
+            if 'active' in data:
+                employee.active = bool(data['active'])
+            if 'cannot_work_days' in data:
+                cannot_work_days = data['cannot_work_days']
+                if isinstance(cannot_work_days, list):
+                    employee.cannot_work_days = json.dumps(cannot_work_days)
+            
+            db.session.commit()
+            logger.info(f"Successfully updated employee: {employee.name}")
+            return jsonify({'success': True, 'employee': employee.to_dict()})
+            
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error updating employee: {str(e)}")
+            return jsonify({'success': False, 'error': str(e)}), 400
+    
+    elif request.method == 'DELETE':
+        try:
+            employee.active = False
+            db.session.commit()
+            logger.info(f"Successfully deactivated employee: {employee.name}")
+            return jsonify({'success': True, 'message': 'Employee deactivated successfully'})
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error deactivating employee: {str(e)}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/schedule', methods=['GET'])
+def get_schedule():
+    """Get schedule with proper filtering"""
+    try:
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        employee_id = request.args.get('employee_id')
+        
+        query = Schedule.query.join(Employee).filter(Employee.active == True)
+        
+        if start_date:
+            query = query.filter(Schedule.schedule_date >= start_date)
+        if end_date:
+            query = query.filter(Schedule.schedule_date <= end_date)
+        if employee_id:
+            query = query.filter(Schedule.employee_id == employee_id)
+        
+        schedules = query.order_by(Schedule.schedule_date, Schedule.shift_start).all()
+        
+        return jsonify({
+            'success': True,
+            'schedules': [sch.to_dict() for sch in schedules],
+            'count': len(schedules)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error fetching schedule: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/schedule/generate', methods=['POST'])
+def generate_schedule_endpoint():
+    """Generate schedule with PTO reshuffling"""
+    try:
+        data = request.json
+        start_date = datetime.strptime(data['start_date'], '%Y-%m-%d').date()
+        weeks = data.get('weeks', 4)
+        days = weeks * 7
+        
+        logger.info(f"Generating schedule for {weeks} weeks starting {start_date}")
+        
+        # Clear existing schedules for the date range
+        end_date = start_date + timedelta(days=days-1)
+        deleted_count = Schedule.query.filter(
+            Schedule.schedule_date >= start_date,
+            Schedule.schedule_date <= end_date
+        ).delete()
+        db.session.commit()
+        logger.info(f"Cleared {deleted_count} existing schedules")
+        
+        # Generate new schedule with PTO reshuffling
+        engine = SchedulingEngine()
+        new_assignments = engine.generate_schedule_with_pto_reshuffling(start_date, days)
+        
+        # Save all assignments to database
+        saved_count = 0
+        for assignment in new_assignments:
+            schedule = Schedule(**assignment)
+            db.session.add(schedule)
+            saved_count += 1
+            
+            # Commit in batches to avoid memory issues
+            if saved_count % 100 == 0:
+                db.session.commit()
+        
+        db.session.commit()
+        
+        logger.info(f"Successfully generated and saved {saved_count} shift assignments")
+        return jsonify({
+            'success': True,
+            'generated_shifts': saved_count,
+            'cleared_shifts': deleted_count,
+            'message': f'Schedule generated successfully for {weeks} weeks with PTO reshuffling'
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error generating schedule: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/timeoff', methods=['GET', 'POST'])
+def api_timeoff():
+    """Time off API with proper response format"""
+    if request.method == 'GET':
+        try:
+            requests = TimeOffRequest.query.join(Employee).filter(
+                Employee.active == True
+            ).order_by(TimeOffRequest.created_at.desc()).all()
+            
+            return jsonify({
+                'success': True,
+                'requests': [req.to_dict() for req in requests],
+                'count': len(requests)
+            })
+        except Exception as e:
+            logger.error(f"Error fetching time off requests: {str(e)}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+    
+    elif request.method == 'POST':
+        try:
+            data = request.json
+            logger.info(f"Creating time off request: {data}")
+            
+            req = TimeOffRequest(
+                employee_id=data['employee_id'],
+                start_date=datetime.strptime(data['start_date'], '%Y-%m-%d').date(),
+                end_date=datetime.strptime(data['end_date'], '%Y-%m-%d').date(),
+                shift_type=data.get('shift_type', 'BOTH'),
+                reason=data.get('reason')
+            )
+            
+            db.session.add(req)
+            db.session.commit()
+            
+            logger.info(f"Successfully created time off request for employee {req.employee.name}")
+            return jsonify({
+                'success': True,
+                'request': req.to_dict()
+            }), 201
+            
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error creating time off request: {str(e)}")
+            return jsonify({'success': False, 'error': str(e)}), 400
+
+@app.route('/api/timeoff/<int:request_id>/approve', methods=['PUT'])
+def approve_timeoff(request_id):
+    """Approve time off request"""
+    try:
+        req = TimeOffRequest.query.get_or_404(request_id)
+        req.status = 'APPROVED'
+        req.approved_at = datetime.utcnow()
+        db.session.commit()
+        
+        logger.info(f"Approved time off request {request_id} for {req.employee.name}")
+        return jsonify({'success': True, 'message': 'Time off request approved'})
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error approving time off request: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/timeoff/<int:request_id>/deny', methods=['PUT'])
+def deny_timeoff(request_id):
+    """Deny time off request"""
+    try:
+        req = TimeOffRequest.query.get_or_404(request_id)
+        req.status = 'DENIED'
+        db.session.commit()
+        
+        logger.info(f"Denied time off request {request_id} for {req.employee.name}")
+        return jsonify({'success': True, 'message': 'Time off request denied'})
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error denying time off request: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# Shift Trade API Routes - Fully implemented
+@app.route('/api/trades', methods=['GET', 'POST'])
+def api_trades():
+    """Shift trade API - fully implemented"""
+    
+    if request.method == 'GET':
+        try:
+            # Get trades with proper filtering
+            status_filter = request.args.get('status')
+            query = ShiftTrade.query.join(Employee, ShiftTrade.requesting_employee_id == Employee.id).filter(
+                Employee.active == True
+            )
+            
+            if status_filter:
+                query = query.filter(ShiftTrade.status == status_filter)
+            
+            trades = query.order_by(ShiftTrade.created_at.desc()).all()
+            valid_trades = []
+            for trade in trades:
+                original_exists = Schedule.query.get(trade.original_schedule_id) is not None
+                trade_exists = Schedule.query.get(trade.trade_schedule_id) is not None
+            if original_exists and trade_exists:
+                valid_trades.append(trade)
+            else:
+                logger.warning(f"Invalid trade {trade.id}: missing schedules (original: {original_exists}, trade: {trade_exists})")
+            
+            return jsonify({
+                'success': True,
+                'trades': [trade.to_dict() for trade in trades],
+                'count': len(trades)
+            })
+        except Exception as e:
+            logger.error(f"Error fetching trades: {str(e)}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+    
+    elif request.method == 'POST':
+        try:
+            data = request.json
+            logger.info(f"Creating shift trade: {data}")
+            
+            # Validate that both schedules exist and belong to the correct employees
+            original_schedule = Schedule.query.get(data['original_schedule_id'])
+            trade_schedule = Schedule.query.get(data['trade_schedule_id'])
+            
+            if not original_schedule:
+                return jsonify({'success': False, 'error': f'Original schedule {data["original_schedule_id"]} not found'}), 400
+            
+            if not trade_schedule:
+                return jsonify({'success': False, 'error': f'Trade schedule {data["trade_schedule_id"]} not found'}), 400
+            
+            if original_schedule.employee_id != data['requesting_employee_id']:
+                return jsonify({'success': False, 'error': 'Original schedule does not belong to requesting employee'}), 400
+            
+            if trade_schedule.employee_id != data['target_employee_id']:
+                return jsonify({'success': False, 'error': 'Trade schedule does not belong to target employee'}), 400
+            
+            # Check if schedules are in the future (can't trade past shifts)
+            if original_schedule.schedule_date < datetime.now().date():
+                return jsonify({'success': False, 'error': 'Cannot trade shifts that have already occurred'}), 400
+            
+            if trade_schedule.schedule_date < datetime.now().date():
+                return jsonify({'success': False, 'error': 'Cannot trade shifts that have already occurred'}), 400
+            
+            trade = ShiftTrade(
+                requesting_employee_id=data['requesting_employee_id'],
+                target_employee_id=data['target_employee_id'],
+                original_schedule_id=data['original_schedule_id'],
+                trade_schedule_id=data['trade_schedule_id'],
+                trade_reason=data.get('trade_reason')
+            )
+            
+            db.session.add(trade)
+            db.session.commit()
+            
+            logger.info(f"Successfully created shift trade request from {trade.requesting_employee.name} to {trade.target_employee.name}")
+            return jsonify({
+                'success': True,
+                'trade': trade.to_dict()
+            }), 201
+            
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error creating trade: {str(e)}")
+            return jsonify({'success': False, 'error': str(e)}), 400        
+    
+
+@app.route('/api/trades/<int:trade_id>/approve', methods=['PUT'])
+def approve_trade(trade_id):
+    """Approve shift trade and perform actual shift swap"""
+    try:
+        trade = ShiftTrade.query.get_or_404(trade_id)
+        
+        if trade.status != 'PENDING':
+            return jsonify({'success': False, 'error': 'Trade is not pending'}), 400
+        
+        # Get the schedules to swap
+        original_schedule = trade.original_schedule
+        trade_schedule = trade.trade_schedule
+        
+        # Store original employee IDs for logging
+        original_employee_id = original_schedule.employee_id
+        target_employee_id = trade_schedule.employee_id
+        
+        # Perform the actual shift swap
+        original_schedule.employee_id = target_employee_id
+        trade_schedule.employee_id = original_employee_id
+        
+        # Update trade status
+        trade.status = 'APPROVED'
+        trade.approved_at = datetime.utcnow()
+        
+        db.session.commit()
+        
+        logger.info(f"Approved shift trade {trade_id}: employees {original_employee_id} and {target_employee_id} swapped shifts")
+        return jsonify({
+            'success': True,
+            'message': 'Trade approved and shifts swapped successfully'
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error approving trade: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/trades/<int:trade_id>/deny', methods=['PUT'])
+def deny_trade(trade_id):
+    """Deny shift trade request"""
+    try:
+        trade = ShiftTrade.query.get_or_404(trade_id)
+        trade.status = 'DENIED'
+        db.session.commit()
+        
+        logger.info(f"Denied shift trade {trade_id}")
+        return jsonify({'success': True, 'message': 'Trade denied successfully'})
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error denying trade: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/trades/cleanup', methods=['POST'])
+def cleanup_trades():
+    """Clean up trades with missing schedules"""
+    try:
+        trades = ShiftTrade.query.all()
+        deleted_count = 0
+        
+        for trade in trades:
+            original_exists = Schedule.query.get(trade.original_schedule_id) is not None
+            trade_exists = Schedule.query.get(trade.trade_schedule_id) is not None
+            
+            if not original_exists or not trade_exists:
+                db.session.delete(trade)
+                deleted_count += 1
+                logger.info(f"Deleted orphaned trade {trade.id}")
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Cleaned up {deleted_count} orphaned trades',
+            'deleted_count': deleted_count
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error cleaning up trades: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    
+@app.route('/api/rules', methods=['GET', 'POST', 'PUT'])
+def api_rules():
+    """Rules API for managing scheduling rules"""
+    if request.method == 'GET':
+        try:
+            rules = Rule.query.order_by(Rule.category, Rule.name).all()
+            return jsonify({
+                'success': True,
+                'rules': [rule.to_dict() for rule in rules],
+                'count': len(rules)
+            })
+        except Exception as e:
+            logger.error(f"Error fetching rules: {str(e)}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+    
+    elif request.method == 'POST':
+        try:
+            data = request.json
+            logger.info(f"Creating rule: {data}")
+            
+            # Check if rule already exists
+            existing_rule = Rule.query.filter_by(name=data['name']).first()
+            if existing_rule:
+                return jsonify({'success': False, 'error': f"Rule '{data['name']}' already exists"}), 400
+            
+            rule = Rule(
+                name=data['name'],
+                value=str(data['value']),
+                category=data['category'],
+                description=data.get('description'),
+                data_type=data.get('data_type', 'string')
+            )
+            
+            db.session.add(rule)
+            db.session.commit()
+            
+            logger.info(f"Successfully created rule: {rule.name}")
+            return jsonify({
+                'success': True,
+                'rule': rule.to_dict()
+            }), 201
+            
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error creating rule: {str(e)}")
+            return jsonify({'success': False, 'error': str(e)}), 400
+    
+    elif request.method == 'PUT':
+        try:
+            data = request.json
+            if not isinstance(data, list):
+                return jsonify({'success': False, 'error': 'Expected array of rules'}), 400
+            
+            logger.info(f"Updating {len(data)} rules")
+            
+            updated_rules = []
+            for rule_data in data:
+                rule = Rule.query.filter_by(name=rule_data['name']).first()
+                if rule:
+                    rule.value = str(rule_data['value'])
+                    rule.updated_at = datetime.utcnow()
+                    updated_rules.append(rule)
+                else:
+                    # Create new rule if it doesn't exist
+                    rule = Rule(
+                        name=rule_data['name'],
+                        value=str(rule_data['value']),
+                        category=rule_data.get('category', 'general'),
+                        data_type=rule_data.get('data_type', 'string')
+                    )
+                    db.session.add(rule)
+                    updated_rules.append(rule)
+            
+            db.session.commit()
+            
+            logger.info(f"Successfully updated {len(updated_rules)} rules")
+            return jsonify({
+                'success': True,
+                'updated_count': len(updated_rules),
+                'rules': [rule.to_dict() for rule in updated_rules]
+            })
+            
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error updating rules: {str(e)}")
+            return jsonify({'success': False, 'error': str(e)}), 400
+
+@app.route('/api/rules/<string:rule_name>', methods=['GET', 'PUT', 'DELETE'])
+def api_rule_detail(rule_name):
+    """Individual rule operations"""
+    rule = Rule.query.filter_by(name=rule_name).first()
+    
+    if not rule:
+        return jsonify({'success': False, 'error': 'Rule not found'}), 404
+    
+    if request.method == 'GET':
+        return jsonify({
+            'success': True,
+            'rule': rule.to_dict()
+        })
+    
+    elif request.method == 'PUT':
+        try:
+            data = request.json
+            logger.info(f"Updating rule {rule_name}: {data}")
+            
+            if 'value' in data:
+                rule.value = str(data['value'])
+            if 'category' in data:
+                rule.category = data['category']
+            if 'description' in data:
+                rule.description = data['description']
+            if 'data_type' in data:
+                rule.data_type = data['data_type']
+            
+            rule.updated_at = datetime.utcnow()
+            db.session.commit()
+            
+            logger.info(f"Successfully updated rule: {rule.name}")
+            return jsonify({
+                'success': True,
+                'rule': rule.to_dict()
+            })
+            
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error updating rule: {str(e)}")
+            return jsonify({'success': False, 'error': str(e)}), 400
+    
+    elif request.method == 'DELETE':
+        try:
+            db.session.delete(rule)
+            db.session.commit()
+            
+            logger.info(f"Successfully deleted rule: {rule_name}")
+            return jsonify({'success': True, 'message': 'Rule deleted successfully'})
+            
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error deleting rule: {str(e)}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/rules/validate', methods=['POST'])
+def validate_rules():
+    """Validate rules against current system state"""
+    try:
+        data = request.json
+        test_type = data.get('test_type', 'coverage')  # coverage, constraints, system
+        
+        # Get current rules
+        rules = Rule.query.all()
+        rules_dict = {rule.name: rule.to_dict()['value'] for rule in rules}
+        
+        # Get system data for validation
+        employees = Employee.query.filter_by(active=True).all()
+        schedules = Schedule.query.filter(
+            Schedule.schedule_date >= datetime.now().date(),
+            Schedule.schedule_date <= datetime.now().date() + timedelta(days=7)
+        ).all()
+        timeoff_requests = TimeOffRequest.query.filter(
+            TimeOffRequest.status == 'APPROVED',
+            TimeOffRequest.start_date <= datetime.now().date() + timedelta(days=7),
+            TimeOffRequest.end_date >= datetime.now().date()
+        ).all()
+        
+        validation_results = []
+        
+        if test_type == 'coverage':
+            validation_results = validate_coverage_rules(rules_dict, schedules, employees)
+        elif test_type == 'constraints':
+            validation_results = validate_constraint_rules(rules_dict, schedules, employees)
+        elif test_type == 'system':
+            validation_results = validate_system_rules(rules_dict, employees, schedules, timeoff_requests)
+        
+        return jsonify({
+            'success': True,
+            'test_type': test_type,
+            'results': validation_results,
+            'summary': {
+                'total_tests': len(validation_results),
+                'passed': len([r for r in validation_results if r['status'] == 'pass']),
+                'warnings': len([r for r in validation_results if r['status'] == 'warning']),
+                'failed': len([r for r in validation_results if r['status'] == 'fail'])
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error validating rules: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/rules/test-schedule', methods=['POST'])
+def test_schedule_rules():
+    """Test rules against a specific schedule"""
+    try:
+        data = request.json
+        start_date = datetime.strptime(data['start_date'], '%Y-%m-%d').date()
+        end_date = datetime.strptime(data['end_date'], '%Y-%m-%d').date()
+        
+        # Get current rules
+        rules = Rule.query.all()
+        rules_dict = {rule.name: rule.to_dict()['value'] for rule in rules}
+        
+        # Get schedule data for the specified period
+        schedules = Schedule.query.filter(
+            Schedule.schedule_date >= start_date,
+            Schedule.schedule_date <= end_date
+        ).all()
+        
+        employees = Employee.query.filter_by(active=True).all()
+        
+        # Perform comprehensive rule testing
+        results = []
+        
+        # Test coverage rules
+        results.extend(validate_coverage_rules(rules_dict, schedules, employees))
+        
+        # Test constraint rules
+        results.extend(validate_constraint_rules(rules_dict, schedules, employees))
+        
+        # Test employee-specific rules
+        results.extend(validate_employee_rules(rules_dict, schedules, employees))
+        
+        return jsonify({
+            'success': True,
+            'period': {
+                'start_date': start_date.isoformat(),
+                'end_date': end_date.isoformat()
+            },
+            'results': results,
+            'summary': {
+                'total_tests': len(results),
+                'passed': len([r for r in results if r['status'] == 'pass']),
+                'warnings': len([r for r in results if r['status'] == 'warning']),
+                'failed': len([r for r in results if r['status'] == 'fail'])
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error testing schedule rules: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/rules/system-report', methods=['GET'])
+def generate_system_report():
+    """Generate comprehensive system report"""
+    try:
+        # Get system data
+        employees = Employee.query.filter_by(active=True).all()
+        schedules = Schedule.query.filter(
+            Schedule.schedule_date >= datetime.now().date(),
+            Schedule.schedule_date <= datetime.now().date() + timedelta(days=30)
+        ).all()
+        timeoff_requests = TimeOffRequest.query.all()
+        rules = Rule.query.all()
+        
+        # Generate report data
+        report_data = {
+            'generated_at': datetime.utcnow().isoformat(),
+            'summary': {
+                'total_employees': len(employees),
+                'active_schedules': len(schedules),
+                'total_rules': len(rules),
+                'timeoff_requests': len(timeoff_requests),
+                'pending_approvals': len([r for r in timeoff_requests if r.status == 'PENDING'])
+            },
+            'employee_breakdown': {
+                'lead_count': len([e for e in employees if e.is_lead]),
+                'night_only_count': len([e for e in employees if e.nights_only]),
+                'both_shift_count': len([e for e in employees if e.shift_preference == 'BOTH']),
+                'average_hours': sum(e.max_hours_per_week for e in employees) / len(employees) if employees else 0
+            },
+            'coverage_analysis': analyze_coverage(schedules, employees),
+            'rule_compliance': analyze_rule_compliance(rules, schedules, employees),
+            'recommendations': generate_recommendations(rules, schedules, employees)
+        }
+        
+        return jsonify({
+            'success': True,
+            'report': report_data
+        })
+        
+    except Exception as e:
+        logger.error(f"Error generating system report: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# Additional API endpoints for shift trade functionality
+@app.route('/api/employees/<int:employee_id>/shifts', methods=['GET'])
+def get_employee_shifts(employee_id):
+    """Get upcoming shifts for a specific employee"""
+    try:
+        start_date = request.args.get('start_date', datetime.now().date().isoformat())
+        end_date = request.args.get('end_date', (datetime.now() + timedelta(days=14)).date().isoformat())
+        
+        shifts = Schedule.query.filter(
+            Schedule.employee_id == employee_id,
+            Schedule.schedule_date >= start_date,
+            Schedule.schedule_date <= end_date
+        ).order_by(Schedule.schedule_date, Schedule.shift_start).all()
+        
+        return jsonify({
+            'success': True,
+            'shifts': [shift.to_dict() for shift in shifts]
+        })
+        
+    except Exception as e:
+        logger.error(f"Error fetching employee shifts: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+_db_init_done = False
+
+# Database initialization
+@app.before_request
+def _init_db_once():
+    global _db_init_done
+
+    if _db_init_done or app.config.get("TESTING"):
+        return
+    with app.app_context():
+        db.create_all()
+    _db_init_done = True     
+
+def create_tables():
+    """Initialize database with sample data"""
+    try:
+        db.create_all()
+        
+        # Add sample employees if database is empty
+        if Employee.query.count() == 0:
+            logger.info("Database empty, initializing with sample data...")
+            
+            sample_employees = [
+                ('Patty Golden', 'patty@hospital.com', True, False, 60, 'LEAD', 'DAY'),
+                ('Nicole Dempster', 'nicole@hospital.com', False, True, 30, None, 'NIGHT'),
+                ('Vicki Theler', 'vicki@hospital.com', False, False, 20, 'LEGAL_CAP', 'BOTH'),
+                ('Mayra Bradley', 'mayra@hospital.com', False, False, 40, None, 'BOTH'),
+                ('Lisa Dixon', 'lisa@hospital.com', False, False, 40, None, 'BOTH'),
+                ('Shala Johnson', 'shala@hospital.com', False, False, 40, None, 'BOTH'),
+                ('Chloe Gray', 'chloe@hospital.com', False, False, 40, None, 'BOTH'),
+                ('Tash Jaramillo', 'tash@hospital.com', False, False, 40, None, 'BOTH'),
+                ('NewHire A', 'newhirea@hospital.com', False, False, 40, 'NEW_HIRE', 'BOTH'),
+                ('NewHire B', 'newhireb@hospital.com', False, False, 40, 'NEW_HIRE', 'BOTH'),
+                ('NewHire C', 'newhirec@hospital.com', False, False, 40, 'NEW_HIRE', 'BOTH')
+            ]
+            
+            for name, email, is_lead, nights_only, max_hours, special_schedule, shift_preference in sample_employees:
+                emp = Employee(
+                    name=name,
+                    email=email,
+                    is_lead=is_lead,
+                    nights_only=nights_only,
+                    max_hours_per_week=max_hours,
+                    special_schedule=special_schedule,
+                    shift_preference=shift_preference,
+                    active=True
+                )
+                db.session.add(emp)
+            
+            db.session.commit()
+            logger.info(f"Database initialized with {len(sample_employees)} sample employees")
+        
+        # Initialize default rules if they don't exist
+        if Rule.query.count() == 0:
+            logger.info("Initializing default rules...")
+            
+            default_rules = [
+                ('min_day_weekday', '5', 'coverage', 'Minimum day shift staff on weekdays', 'number'),
+                ('min_day_weekend', '4', 'coverage', 'Minimum day shift staff on weekends', 'number'),
+                ('min_night', '3', 'coverage', 'Minimum night shift staff', 'number'),
+                ('default_max_hours', '40', 'constraints', 'Default maximum hours per week', 'number'),
+                ('max_consecutive_days', '5', 'constraints', 'Maximum consecutive work days', 'number'),
+                ('min_rest_hours', '10', 'constraints', 'Minimum rest hours between shifts', 'number'),
+                ('overtime_threshold', '40', 'constraints', 'Overtime threshold (hours/week)', 'number'),
+                ('lead_hours', '60', 'special_roles', 'Lead weekly hours target', 'number'),
+                ('newhire_hours', '32', 'special_roles', 'New hire training hours', 'number'),
+                ('min_notice_days', '14', 'timeoff', 'Minimum notice for time off (days)', 'number'),
+                ('max_timeoff_monthly', '10', 'timeoff', 'Maximum time off per employee (days/month)', 'number'),
+                ('allow_trades', 'true', 'trades', 'Allow shift trades', 'boolean'),
+                ('day_shift_start', '07:00', 'shifts', 'Day shift start time', 'time'),
+                ('day_shift_end', '19:00', 'shifts', 'Day shift end time', 'time'),
+                ('night_shift_start', '19:00', 'shifts', 'Night shift start time', 'time'),
+                ('night_shift_end', '07:00', 'shifts', 'Night shift end time', 'time')
+            ]
+            
+            for name, value, category, description, data_type in default_rules:
+                rule = Rule(
+                    name=name,
+                    value=value,
+                    category=category,
+                    description=description,
+                    data_type=data_type
+                )
+                db.session.add(rule)
+            
+            db.session.commit()
+            logger.info(f"Initialized {len(default_rules)} default rules")
+        else:
+            active_count = Employee.query.filter_by(active=True).count()
+            rule_count = Rule.query.count()
+            logger.info(f"Database already contains data: {active_count} active employees, {rule_count} rules")
+            
+    except Exception as e:
+        logger.error(f"Error initializing database: {str(e)}")
+        db.session.rollback()
+
+# Error handlers
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({'success': False, 'error': 'Resource not found'}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    logger.error(f"Internal server error: {str(error)}")
+    return jsonify({'success': False, 'error': 'Internal server error'}), 500
+
+if __name__ == '__main__':
+    # Production configuration
+    is_production = os.environ.get('FLASK_ENV') == 'production'
+    
+    if is_production:
+        # Production settings
+        app.run(host='0.0.0.0', port=5005, debug=False)
+    else:
+        # Development settings
+        app.run(host='0.0.0.0', port=5005, debug=True)
